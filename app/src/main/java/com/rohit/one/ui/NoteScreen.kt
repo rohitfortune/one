@@ -915,6 +915,10 @@ private fun BottomFormattingBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // Make the bar stay above the system navigation bar and
+            // move up together with the on‑screen keyboard (IME).
+            .imePadding()
+            .navigationBarsPadding()
             .background(Color(0xFFF5F1FF))
             .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceAround,
