@@ -3,6 +3,9 @@ package com.rohit.one.ui
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -19,7 +22,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
@@ -96,8 +103,15 @@ private fun NoteEditorState.deepCopy(): NoteEditorState =
 // --- Legacy edit mode enum kept so toolbar icons stay the same, but drawing is removed in this refactor ---
 
 private enum class EditMode {
-    TEXT, DRAW, ERASE, SELECT
+    TEXT, DRAW
 }
+
+// Simple drawing state for freehand overlay
+private data class DrawingState(
+    val isDrawing: Boolean = false,
+    val strokes: List<Note.Path> = emptyList(),
+    val currentStroke: Note.Path? = null
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,6 +122,8 @@ fun NoteScreen(
     onNavigateUp: () -> Unit
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     // Parse existing markdown into simple blocks: lines starting with "[ ] " / "[x] " become checklist items.
     val initialText = note?.content ?: ""
@@ -131,6 +147,16 @@ fun NoteScreen(
         history.push(editorState)
     }
 
+    var drawingState by remember(note?.paths) {
+        mutableStateOf(
+            DrawingState(
+                isDrawing = false,
+                strokes = note?.paths ?: emptyList(),
+                currentStroke = null
+            )
+        )
+    }
+
     fun saveNote() {
         val markdown = blocksToMarkdown(editorState.blocks)
         val noteToSave = Note(
@@ -138,7 +164,7 @@ fun NoteScreen(
             title = editorState.title,
             content = markdown,
             attachments = note?.attachments ?: emptyList(),
-            paths = note?.paths ?: emptyList(),
+            paths = drawingState.strokes,
             lastModified = System.currentTimeMillis()
         )
         onSave(noteToSave)
@@ -162,7 +188,9 @@ fun NoteScreen(
                         TextField(
                             value = editorState.title,
                             onValueChange = {
-                                editorState = editorState.copy(title = it)
+                                if (editMode == EditMode.TEXT) {
+                                    editorState = editorState.copy(title = it)
+                                }
                             },
                             placeholder = { Text("Title", color = Color.Gray) },
                             colors = TextFieldDefaults.colors(
@@ -219,30 +247,48 @@ fun NoteScreen(
                     horizontalArrangement = Arrangement.SpaceAround,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = { editMode = EditMode.TEXT }) {
+                    // Pen icon is the single toggle between TEXT and DRAW modes
+                    IconButton(onClick = {
+                        val newMode = if (editMode == EditMode.TEXT) EditMode.DRAW else EditMode.TEXT
+                        editMode = newMode
+                        drawingState = drawingState.copy(
+                            isDrawing = (newMode == EditMode.DRAW),
+                            currentStroke = null
+                        )
+                        if (newMode == EditMode.DRAW) {
+                            // Leave text mode: clear focus and hide keyboard so typing stops.
+                            focusManager.clearFocus(force = true)
+                            keyboardController?.hide()
+                        }
+                    }) {
                         Icon(
-                            Icons.Filled.Keyboard,
-                            contentDescription = "Text Mode",
-                            tint = if (editMode == EditMode.TEXT) Color.Black else Color.Gray
+                            Icons.Filled.Colorize,
+                            contentDescription = "Toggle Draw Mode",
+                            tint = if (editMode == EditMode.DRAW) Color.Black else Color.Gray
                         )
                     }
-                    // Drawing related icons are visually present but disabled in this refactor
-                    IconButton(onClick = { /* no-op in new model */ }, enabled = false) {
-                        Icon(Icons.Filled.Colorize, contentDescription = "Draw Mode", tint = Color.LightGray)
-                    }
-                    IconButton(onClick = { /* no-op in new model */ }, enabled = false) {
+                    // Erase and select remain disabled placeholders
+                    IconButton(onClick = { /* Erase mode can be added later */ }, enabled = false) {
                         Icon(Icons.Filled.RemoveCircleOutline, contentDescription = "Erase Mode", tint = Color.LightGray)
                     }
-                    IconButton(onClick = { /* no-op in new model */ }, enabled = false) {
+                    IconButton(onClick = { /* Select mode can be added later */ }, enabled = false) {
                         Icon(Icons.Filled.TouchApp, contentDescription = "Select Mode", tint = Color.LightGray)
                     }
                     IconButton(onClick = {
-                        history.undo()?.let { editorState = it }
-                    }, enabled = history.canUndo()) {
+                        // Undo last drawing stroke if any, otherwise fall back to text undo
+                        if (drawingState.strokes.isNotEmpty()) {
+                            drawingState = drawingState.copy(
+                                strokes = drawingState.strokes.dropLast(1),
+                                currentStroke = null
+                            )
+                        } else {
+                            history.undo()?.let { editorState = it }
+                        }
+                    }, enabled = history.canUndo() || drawingState.strokes.isNotEmpty()) {
                         Icon(
                             Icons.AutoMirrored.Filled.Undo,
                             contentDescription = "Undo",
-                            tint = if (history.canUndo()) Color.Black else Color.Gray
+                            tint = if (history.canUndo() || drawingState.strokes.isNotEmpty()) Color.Black else Color.Gray
                         )
                     }
                     IconButton(onClick = {
@@ -262,321 +308,311 @@ fun NoteScreen(
         bottomBar = {
             BottomFormattingBar(
                 onChecklist = {
-                    val blocks = editorState.blocks.toMutableList()
-                    val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
-                    blocks.add(insertPos, NoteBlock.ChecklistItem(text = "", checked = false))
-                    editorState = editorState.copy(blocks = blocks)
-                    focusedBlockIndex = insertPos
-                    pushHistory()
+                    if (editMode == EditMode.TEXT) {
+                        val blocks = editorState.blocks.toMutableList()
+                        val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
+                        blocks.add(insertPos, NoteBlock.ChecklistItem(text = "", checked = false))
+                        editorState = editorState.copy(blocks = blocks)
+                        focusedBlockIndex = insertPos
+                        pushHistory()
+                    }
                 },
                 onBulletList = {
-                    val blocks = editorState.blocks.toMutableList()
-                    val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
-                    blocks.add(insertPos, NoteBlock.BulletItem(text = ""))
-                    editorState = editorState.copy(blocks = blocks)
-                    focusedBlockIndex = insertPos
-                    pushHistory()
+                    if (editMode == EditMode.TEXT) {
+                        val blocks = editorState.blocks.toMutableList()
+                        val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
+                        blocks.add(insertPos, NoteBlock.BulletItem(text = ""))
+                        editorState = editorState.copy(blocks = blocks)
+                        focusedBlockIndex = insertPos
+                        pushHistory()
+                    }
                 },
                 onNumberedList = {
-                    val blocks = editorState.blocks.toMutableList()
-                    val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
-                    blocks.add(insertPos, NoteBlock.NumberedItem(index = 1, text = ""))
-                    editorState = editorState.copy(blocks = blocks)
-                    focusedBlockIndex = insertPos
-                    pushHistory()
+                    if (editMode == EditMode.TEXT) {
+                        val blocks = editorState.blocks.toMutableList()
+                        val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
+                        blocks.add(insertPos, NoteBlock.NumberedItem(index = 1, text = ""))
+                        editorState = editorState.copy(blocks = blocks)
+                        focusedBlockIndex = insertPos
+                        pushHistory()
+                    }
                 },
                 onBold = {
-                    // Simple: append ** marker, real styling model would be richer
-                    val blocks = editorState.blocks.toMutableList()
-                    if (blocks.isNotEmpty()) {
-                        val last = blocks.last()
-                        if (last is NoteBlock.Paragraph) {
-                            last.text += " **bold**"
-                            editorState = editorState.copy(blocks = blocks)
-                            pushHistory()
+                    if (editMode == EditMode.TEXT) {
+                        // Simple: append ** marker, real styling model would be richer
+                        val blocks = editorState.blocks.toMutableList()
+                        if (blocks.isNotEmpty()) {
+                            val last = blocks.last()
+                            if (last is NoteBlock.Paragraph) {
+                                last.text += " **bold**"
+                                editorState = editorState.copy(blocks = blocks)
+                                pushHistory()
+                            }
                         }
                     }
                 },
                 onItalic = {
-                    val blocks = editorState.blocks.toMutableList()
-                    if (blocks.isNotEmpty()) {
-                        val last = blocks.last()
-                        if (last is NoteBlock.Paragraph) {
-                            last.text += " _italic_"
-                            editorState = editorState.copy(blocks = blocks)
-                            pushHistory()
+                    if (editMode == EditMode.TEXT) {
+                        val blocks = editorState.blocks.toMutableList()
+                        if (blocks.isNotEmpty()) {
+                            val last = blocks.last()
+                            if (last is NoteBlock.Paragraph) {
+                                last.text += " _italic_"
+                                editorState = editorState.copy(blocks = blocks)
+                                pushHistory()
+                            }
                         }
                     }
                 },
                 onUnderline = {
-                    val blocks = editorState.blocks.toMutableList()
-                    if (blocks.isNotEmpty()) {
-                        val last = blocks.last()
-                        if (last is NoteBlock.Paragraph) {
-                            last.text += " __underline__"
-                            editorState = editorState.copy(blocks = blocks)
-                            pushHistory()
+                    if (editMode == EditMode.TEXT) {
+                        val blocks = editorState.blocks.toMutableList()
+                        if (blocks.isNotEmpty()) {
+                            val last = blocks.last()
+                            if (last is NoteBlock.Paragraph) {
+                                last.text += " __underline__"
+                                editorState = editorState.copy(blocks = blocks)
+                                pushHistory()
+                            }
                         }
                     }
                 }
             )
         }
     ) { innerPadding ->
-        // Main content: list of blocks
-        LazyColumn(
+        Box(
             modifier = Modifier
                 .padding(innerPadding)
                 .fillMaxSize()
-                .background(Color.White),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .background(Color.White)
         ) {
-            itemsIndexed(editorState.blocks, key = { index, _ -> index }) { index, block ->
-                val isLastBlock = index == editorState.blocks.lastIndex
-                val thisShouldFocus = index == focusedBlockIndex
-                when (block) {
-                    is NoteBlock.Paragraph -> ParagraphBlock(
-                        text = block.text,
-                        onTextChange = { newText ->
-                            val blocks = editorState.blocks.toMutableList()
-                            val current = blocks.getOrNull(index)
-                            if (current is NoteBlock.Paragraph) {
-                                blocks[index] = current.copy(text = newText)
-                                editorState = editorState.copy(blocks = blocks)
-                            }
-                        },
-                        onBackspaceAtStart = { isEmptyNow ->
-                            val blocks = editorState.blocks.toMutableList()
-                            Log.d(
-                                "NoteScreen",
-                                "Paragraph onBackspaceAtStart: index=$index isEmptyNow=$isEmptyNow sizeBefore=${blocks.size}"
-                            )
-
-                            // New behavior: backspace at start only ever removes this paragraph
-                            // (when empty) and never deletes the block above.
-                            if (isEmptyNow && blocks.size > 1 && index in blocks.indices) {
+            // Main content: list of blocks
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                itemsIndexed(editorState.blocks, key = { index, _ -> index }) { index, block ->
+                    val isLastBlock = index == editorState.blocks.lastIndex
+                    val thisShouldFocus = index == focusedBlockIndex
+                    when (block) {
+                        is NoteBlock.Paragraph -> ParagraphBlock(
+                            text = block.text,
+                            editMode = editMode,
+                            onTextChange = { newText: String ->
+                                if (editMode == EditMode.TEXT) {
+                                    val blocks = editorState.blocks.toMutableList()
+                                    val current = blocks.getOrNull(index)
+                                    if (current is NoteBlock.Paragraph) {
+                                        blocks[index] = current.copy(text = newText)
+                                        editorState = editorState.copy(blocks = blocks)
+                                    }
+                                }
+                            },
+                            onBackspaceAtStart = { isEmptyNow: Boolean ->
+                                val blocks = editorState.blocks.toMutableList()
                                 Log.d(
                                     "NoteScreen",
-                                    "Paragraph backspace: removing empty paragraph at index=$index"
+                                    "Paragraph onBackspaceAtStart: index=$index isEmptyNow=$isEmptyNow sizeBefore=${blocks.size}"
                                 )
-                                blocks.removeAt(index)
-                                editorState = editorState.copy(blocks = blocks)
-                                pushHistory()
-                            }
-                        },
-                        onFocused = { focusedBlockIndex = index }
-                    )
 
-                    is NoteBlock.ChecklistItem -> ChecklistBlock(
-                        item = block,
-                        autoFocus = thisShouldFocus || (isLastBlock && block.text.isEmpty()),
-                        onCheckedChange = { checked ->
-                            val blocks = editorState.blocks.toMutableList()
-                            val current = blocks.getOrNull(index)
-                            if (current is NoteBlock.ChecklistItem) {
-                                blocks[index] = current.copy(checked = checked)
-                                editorState = editorState.copy(blocks = blocks)
-                                pushHistory()
-                            }
-                        },
-                        onTextChange = { newText ->
-                            val blocks = editorState.blocks.toMutableList()
-                            val current = blocks.getOrNull(index)
-                            if (current is NoteBlock.ChecklistItem) {
-                                // Mirror numbered-list guard: only mutate when this block's text
-                                // truly changes, and ignore stale empty updates into non-empty text.
-                                if (current.text != newText) {
+                                // New behavior: backspace at start only ever removes this paragraph
+                                // (when empty) and never deletes the block above.
+                                if (isEmptyNow && blocks.size > 1 && index in blocks.indices) {
                                     Log.d(
                                         "NoteScreen",
-                                        "Checklist onTextChange index=$index guarded old='${current.text}' new='$newText'"
+                                        "Paragraph backspace: removing empty paragraph at index=$index"
                                     )
-                                    if (!(newText.isEmpty() && current.text.isNotEmpty())) {
-                                        blocks[index] = current.copy(text = newText)
-                                    }
+                                    blocks.removeAt(index)
                                     editorState = editorState.copy(blocks = blocks)
                                     pushHistory()
                                 }
-                            }
-                        },
-                        onEnter = { wasEmpty ->
-                            val blocks = editorState.blocks.toMutableList()
-                            val current = blocks.getOrNull(index) as? NoteBlock.ChecklistItem
-                                ?: return@ChecklistBlock
-                            if (wasEmpty) {
-                                blocks[index] = NoteBlock.Paragraph("")
-                                focusedBlockIndex = index
-                            } else {
-                                val insertPos = index + 1
-                                blocks.add(insertPos, NoteBlock.ChecklistItem(text = "", checked = false))
-                                focusedBlockIndex = insertPos
-                            }
-                            editorState = editorState.copy(blocks = blocks)
-                            pushHistory()
-                        },
-                        onBackspaceAtStart = {
-                            val blocks = editorState.blocks.toMutableList()
-                            val current = blocks.getOrNull(index) as? NoteBlock.ChecklistItem
-                                ?: return@ChecklistBlock
+                            },
+                            onFocused = { focusedBlockIndex = index }
+                        )
 
-                            Log.d(
-                                "NoteScreen",
-                                "Checklist onBackspaceAtStart: index=$index text='${current.text}' sizeBefore=${blocks.size}"
-                            )
-
-                            // New behavior: backspace at start only deletes this checklist item
-                            // (when there is at least one other block) and never touches the one above.
-                            if (blocks.size > 1 && index in blocks.indices) {
-                                blocks.removeAt(index)
-                                editorState = editorState.copy(blocks = blocks)
-                                pushHistory()
-                            }
-                        },
-                        onFocused = { focusedBlockIndex = index }
-                    )
-
-                    is NoteBlock.BulletItem -> BulletBlock(
-                        item = block,
-                        autoFocus = thisShouldFocus || (isLastBlock && block.text.isEmpty()),
-                        onTextChange = { newText ->
-                            val blocks = editorState.blocks.toMutableList()
-                            val current = blocks.getOrNull(index)
-                            if (current is NoteBlock.BulletItem) {
-                                // Same guard pattern as numbered/checklist: ignore stale empty
-                                // updates into non-empty bullet text and only push real changes.
-                                if (current.text != newText) {
-                                    Log.d(
-                                        "NoteScreen",
-                                        "Bullet onTextChange index=$index guarded old='${current.text}' new='$newText'"
-                                    )
-                                    if (!(newText.isEmpty() && current.text.isNotEmpty())) {
-                                        blocks[index] = current.copy(text = newText)
-                                    }
+                        is NoteBlock.ChecklistItem -> ChecklistBlock(
+                            item = block,
+                            editMode = editMode,
+                            autoFocus = thisShouldFocus || (isLastBlock && block.text.isEmpty()),
+                            onCheckedChange = { checked: Boolean ->
+                                val blocks = editorState.blocks.toMutableList()
+                                val current = blocks.getOrNull(index)
+                                if (current is NoteBlock.ChecklistItem) {
+                                    blocks[index] = current.copy(checked = checked)
                                     editorState = editorState.copy(blocks = blocks)
                                     pushHistory()
                                 }
-                            }
-                        },
-                        onEnter = { wasEmpty ->
-                            val blocks = editorState.blocks.toMutableList()
-                            val current = blocks.getOrNull(index) as? NoteBlock.BulletItem
-                                ?: return@BulletBlock
-                            if (wasEmpty) {
-                                blocks[index] = NoteBlock.Paragraph("")
-                                focusedBlockIndex = index
-                            } else {
-                                val insertPos = index + 1
-                                blocks.add(insertPos, NoteBlock.BulletItem(text = ""))
-                                focusedBlockIndex = insertPos
-                            }
-                            editorState = editorState.copy(blocks = blocks)
-                            pushHistory()
-                        },
-                        onBackspaceAtStart = {
-                            val blocks = editorState.blocks.toMutableList()
-                            val current = blocks.getOrNull(index) as? NoteBlock.BulletItem
-                                ?: return@BulletBlock
-                            if (blocks.size > 1 && index in blocks.indices) {
-                                blocks.removeAt(index)
-                                editorState = editorState.copy(blocks = blocks)
-                                pushHistory()
-                            }
-                        },
-                        onFocused = { focusedBlockIndex = index }
-                    )
-
-                    is NoteBlock.NumberedItem -> NumberedBlock(
-                        item = block,
-                        autoFocus = thisShouldFocus || (isLastBlock && block.text.isEmpty()),
-                        onTextChange = { newText ->
-                            val blocks = editorState.blocks.toMutableList()
-                            val current = blocks.getOrNull(index)
-                            if (current is NoteBlock.NumberedItem) {
-                                // Only update when the text actually changes for THIS block.
-                                // If callbacks arrive after this block was deleted/reindexed, the
-                                // text in the model won't match and we skip the mutation.
-                                if (current.text != newText) {
-                                    Log.d(
-                                        "NoteScreen",
-                                        "Numbered onTextChange index=$index guarded old='${current.text}' new='$newText'"
-                                    )
-                                    // Extra guard: ignore a stale empty update if the current block
-                                    // already has non-empty text (e.g., the next item after deletion).
-                                    if (!(newText.isEmpty() && current.text.isNotEmpty())) {
-                                        blocks[index] = current.copy(text = newText)
-                                    }
-                                }
-                                // Recalculate indices for each contiguous numbered list separately
-                                var runStart = 0
-                                while (runStart < blocks.size) {
-                                    while (runStart < blocks.size && blocks[runStart] !is NoteBlock.NumberedItem) {
-                                        runStart++
-                                    }
-                                    if (runStart >= blocks.size) break
-                                    var runEnd = runStart
-                                    while (runEnd < blocks.size && blocks[runEnd] is NoteBlock.NumberedItem) {
-                                        runEnd++
-                                    }
-                                    var localIndex = 1
-                                    for (i in runStart until runEnd) {
-                                        val b = blocks[i] as NoteBlock.NumberedItem
-                                        if (b.index != localIndex) {
-                                            blocks[i] = b.copy(index = localIndex)
+                            },
+                            onTextChange = { newText: String ->
+                                val blocks = editorState.blocks.toMutableList()
+                                val current = blocks.getOrNull(index)
+                                if (current is NoteBlock.ChecklistItem) {
+                                    // Mirror numbered-list guard: only mutate when this block's text
+                                    // truly changes, and ignore stale empty updates into non-empty text.
+                                    if (current.text != newText) {
+                                        Log.d(
+                                            "NoteScreen",
+                                            "Checklist onTextChange index=$index guarded old='${current.text}' new='$newText'"
+                                        )
+                                        if (!(newText.isEmpty() && current.text.isNotEmpty())) {
+                                            blocks[index] = current.copy(text = newText)
                                         }
-                                        localIndex++
+                                        editorState = editorState.copy(blocks = blocks)
+                                        pushHistory()
                                     }
-                                    runStart = runEnd
+                                }
+                            },
+                            onEnter = { wasEmpty: Boolean ->
+                                val blocks = editorState.blocks.toMutableList()
+                                val current = blocks.getOrNull(index) as? NoteBlock.ChecklistItem
+                                if (current == null) return@ChecklistBlock
+                                if (wasEmpty) {
+                                    blocks[index] = NoteBlock.Paragraph("")
+                                    focusedBlockIndex = index
+                                } else {
+                                    val insertPos = index + 1
+                                    blocks.add(insertPos, NoteBlock.ChecklistItem(text = "", checked = false))
+                                    focusedBlockIndex = insertPos
                                 }
                                 editorState = editorState.copy(blocks = blocks)
                                 pushHistory()
-                            }
-                        },
-                        onEnter = { wasEmpty ->
-                            val blocks = editorState.blocks.toMutableList()
-                            val current = blocks.getOrNull(index) as? NoteBlock.NumberedItem
-                                ?: return@NumberedBlock
-                            Log.d("NoteScreen", "Numbered onEnter index=$index wasEmpty=$wasEmpty text='${current.text}' sizeBefore=${blocks.size}")
-                            if (wasEmpty) {
-                                blocks[index] = NoteBlock.Paragraph("")
-                                focusedBlockIndex = index
-                            } else {
-                                val insertPos = index + 1
-                                blocks.add(insertPos, NoteBlock.NumberedItem(index = 1, text = ""))
-                                focusedBlockIndex = insertPos
-                            }
-                            // Recalculate indices for each contiguous numbered list separately,
-                            // including the new item if added.
-                            var runStart = 0
-                            while (runStart < blocks.size) {
-                                while (runStart < blocks.size && blocks[runStart] !is NoteBlock.NumberedItem) {
-                                    runStart++
+                            },
+                            onBackspaceAtStart = {
+                                val blocks = editorState.blocks.toMutableList()
+                                val current = blocks.getOrNull(index) as? NoteBlock.ChecklistItem
+                                if (current == null) return@ChecklistBlock
+
+                                Log.d(
+                                    "NoteScreen",
+                                    "Checklist onBackspaceAtStart: index=$index text='${current.text}' sizeBefore=${blocks.size}"
+                                )
+
+                                // New behavior: backspace at start only deletes this checklist item
+                                // (when there is at least one other block) and never touches the one above.
+                                if (blocks.size > 1 && index in blocks.indices) {
+                                    blocks.removeAt(index)
+                                    editorState = editorState.copy(blocks = blocks)
+                                    pushHistory()
                                 }
-                                if (runStart >= blocks.size) break
-                                var runEnd = runStart
-                                while (runEnd < blocks.size && blocks[runEnd] is NoteBlock.NumberedItem) {
-                                    runEnd++
+                            },
+                            onFocused = { focusedBlockIndex = index }
+                        )
+
+                        is NoteBlock.BulletItem -> BulletBlock(
+                            item = block,
+                            editMode = editMode,
+                            autoFocus = thisShouldFocus || (isLastBlock && block.text.isEmpty()),
+                            onTextChange = { newText: String ->
+                                val blocks = editorState.blocks.toMutableList()
+                                val current = blocks.getOrNull(index)
+                                if (current is NoteBlock.BulletItem) {
+                                    // Same guard pattern as numbered/checklist: ignore stale empty
+                                    // updates into non-empty bullet text and only push real changes.
+                                    if (current.text != newText) {
+                                        Log.d(
+                                            "NoteScreen",
+                                            "Bullet onTextChange index=$index guarded old='${current.text}' new='$newText'"
+                                        )
+                                        if (!(newText.isEmpty() && current.text.isNotEmpty())) {
+                                            blocks[index] = current.copy(text = newText)
+                                        }
+                                        editorState = editorState.copy(blocks = blocks)
+                                        pushHistory()
+                                    }
                                 }
-                                var localIndex = 1
-                                for (i in runStart until runEnd) {
-                                    val b = blocks[i] as NoteBlock.NumberedItem
-                                    blocks[i] = b.copy(index = localIndex++)
+                            },
+                            onEnter = { wasEmpty: Boolean ->
+                                val blocks = editorState.blocks.toMutableList()
+                                val current = blocks.getOrNull(index) as? NoteBlock.BulletItem
+                                if (current == null) return@BulletBlock
+                                if (wasEmpty) {
+                                    blocks[index] = NoteBlock.Paragraph("")
+                                    focusedBlockIndex = index
+                                } else {
+                                    val insertPos = index + 1
+                                    blocks.add(insertPos, NoteBlock.BulletItem(text = ""))
+                                    focusedBlockIndex = insertPos
                                 }
-                                runStart = runEnd
-                            }
-                            Log.d("NoteScreen", "Numbered onEnter after reindex sizeAfter=${blocks.size}")
-                            editorState = editorState.copy(blocks = blocks)
-                            pushHistory()
-                        },
-                        onBackspaceAtStart = {
-                            val blocks = editorState.blocks.toMutableList()
-                            val current = blocks.getOrNull(index) as? NoteBlock.NumberedItem
-                                ?: return@NumberedBlock
-                            Log.d(
-                                "NoteScreen",
-                                "Numbered onBackspaceAtStart index=$index text='${current.text}' sizeBefore=${blocks.size}"
-                            )
-                            if (blocks.size > 1 && index in blocks.indices) {
-                                blocks.removeAt(index)
-                                // Recalculate indices for each contiguous numbered list after removal.
+                                editorState = editorState.copy(blocks = blocks)
+                                pushHistory()
+                            },
+                            onBackspaceAtStart = {
+                                val blocks = editorState.blocks.toMutableList()
+                                val current = blocks.getOrNull(index) as? NoteBlock.BulletItem
+                                if (current == null) return@BulletBlock
+                                if (blocks.size > 1 && index in blocks.indices) {
+                                    blocks.removeAt(index)
+                                    editorState = editorState.copy(blocks = blocks)
+                                    pushHistory()
+                                }
+                            },
+                            onFocused = { focusedBlockIndex = index }
+                        )
+
+                        is NoteBlock.NumberedItem -> NumberedBlock(
+                            item = block,
+                            editMode = editMode,
+                            autoFocus = thisShouldFocus || (isLastBlock && block.text.isEmpty()),
+                            onTextChange = { newText: String ->
+                                val blocks = editorState.blocks.toMutableList()
+                                val current = blocks.getOrNull(index)
+                                if (current is NoteBlock.NumberedItem) {
+                                    // Only update when the text actually changes for THIS block.
+                                    // If callbacks arrive after this block was deleted/reindexed, the
+                                    // text in the model won't match and we skip the mutation.
+                                    if (current.text != newText) {
+                                        Log.d(
+                                            "NoteScreen",
+                                            "Numbered onTextChange index=$index guarded old='${current.text}' new='$newText'"
+                                        )
+                                        // Extra guard: ignore a stale empty update if the current block
+                                        // already has non-empty text (e.g., the next item after deletion).
+                                        if (!(newText.isEmpty() && current.text.isNotEmpty())) {
+                                            blocks[index] = current.copy(text = newText)
+                                        }
+                                    }
+                                    // Recalculate indices for each contiguous numbered list separately
+                                    var runStart = 0
+                                    while (runStart < blocks.size) {
+                                        while (runStart < blocks.size && blocks[runStart] !is NoteBlock.NumberedItem) {
+                                            runStart++
+                                        }
+                                        if (runStart >= blocks.size) break
+                                        var runEnd = runStart
+                                        while (runEnd < blocks.size && blocks[runEnd] is NoteBlock.NumberedItem) {
+                                            runEnd++
+                                        }
+                                        var localIndex = 1
+                                        for (i in runStart until runEnd) {
+                                            val b = blocks[i] as NoteBlock.NumberedItem
+                                            if (b.index != localIndex) {
+                                                blocks[i] = b.copy(index = localIndex)
+                                            }
+                                            localIndex++
+                                        }
+                                        runStart = runEnd
+                                    }
+                                    editorState = editorState.copy(blocks = blocks)
+                                    pushHistory()
+                                }
+                            },
+                            onEnter = { wasEmpty: Boolean ->
+                                val blocks = editorState.blocks.toMutableList()
+                                val current = blocks.getOrNull(index) as? NoteBlock.NumberedItem
+                                if (current == null) return@NumberedBlock
+                                Log.d("NoteScreen", "Numbered onEnter index=$index wasEmpty=$wasEmpty text='${current.text}' sizeBefore=${blocks.size}")
+                                if (wasEmpty) {
+                                    blocks[index] = NoteBlock.Paragraph("")
+                                    focusedBlockIndex = index
+                                } else {
+                                    val insertPos = index + 1
+                                    blocks.add(insertPos, NoteBlock.NumberedItem(index = 1, text = ""))
+                                    focusedBlockIndex = insertPos
+                                }
+                                // Recalculate indices for each contiguous numbered list separately,
+                                // including the new item if added.
                                 var runStart = 0
                                 while (runStart < blocks.size) {
                                     while (runStart < blocks.size && blocks[runStart] !is NoteBlock.NumberedItem) {
@@ -594,15 +630,57 @@ fun NoteScreen(
                                     }
                                     runStart = runEnd
                                 }
-                                Log.d("NoteScreen", "Numbered onBackspaceAtStart after remove sizeAfter=${blocks.size}")
+                                Log.d("NoteScreen", "Numbered onEnter after reindex sizeAfter=${blocks.size}")
                                 editorState = editorState.copy(blocks = blocks)
                                 pushHistory()
-                            }
-                        },
-                        onFocused = { focusedBlockIndex = index }
-                    )
+                            },
+                            onBackspaceAtStart = {
+                                val blocks = editorState.blocks.toMutableList()
+                                val current = blocks.getOrNull(index) as? NoteBlock.NumberedItem
+                                if (current == null) return@NumberedBlock
+                                Log.d(
+                                    "NoteScreen",
+                                    "Numbered onBackspaceAtStart index=$index text='${current.text}' sizeBefore=${blocks.size}"
+                                )
+                                if (blocks.size > 1 && index in blocks.indices) {
+                                    blocks.removeAt(index)
+                                    // Recalculate indices for each contiguous numbered list after removal.
+                                    var runStart = 0
+                                    while (runStart < blocks.size) {
+                                        while (runStart < blocks.size && blocks[runStart] !is NoteBlock.NumberedItem) {
+                                            runStart++
+                                        }
+                                        if (runStart >= blocks.size) break
+                                        var runEnd = runStart
+                                        while (runEnd < blocks.size && blocks[runEnd] is NoteBlock.NumberedItem) {
+                                            runEnd++
+                                        }
+                                        var localIndex = 1
+                                        for (i in runStart until runEnd) {
+                                            val b = blocks[i] as NoteBlock.NumberedItem
+                                            blocks[i] = b.copy(index = localIndex++)
+                                        }
+                                        runStart = runEnd
+                                    }
+                                    Log.d("NoteScreen", "Numbered onBackspaceAtStart after remove sizeAfter=${blocks.size}")
+                                    editorState = editorState.copy(blocks = blocks)
+                                    pushHistory()
+                                }
+                            },
+                            onFocused = { focusedBlockIndex = index }
+                        )
+                    }
                 }
             }
+
+            // Always render drawing overlay so strokes stay visible in both modes,
+            // but only capture pointer events when actually drawing.
+            DrawingOverlay(
+                modifier = Modifier.fillMaxSize(),
+                drawingState = drawingState,
+                isInputEnabled = drawingState.isDrawing,
+                onUpdateDrawingState = { transform -> drawingState = transform(drawingState) }
+            )
         }
     }
 }
@@ -610,6 +688,7 @@ fun NoteScreen(
 @Composable
 private fun ParagraphBlock(
     text: String,
+    editMode: EditMode,
     onTextChange: (String) -> Unit,
     onBackspaceAtStart: (isEmptyNow: Boolean) -> Unit,
     onFocused: () -> Unit
@@ -618,6 +697,8 @@ private fun ParagraphBlock(
     BasicTextField(
         value = value,
         onValueChange = { newValue ->
+            if (editMode != EditMode.TEXT) return@BasicTextField
+
             val oldText = value.text
             val oldSelection = value.selection
             val newText = newValue.text
@@ -667,6 +748,7 @@ private fun ParagraphBlock(
 @Composable
 private fun ChecklistBlock(
     item: NoteBlock.ChecklistItem,
+    editMode: EditMode,
     autoFocus: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     onTextChange: (String) -> Unit,
@@ -707,6 +789,8 @@ private fun ChecklistBlock(
         BasicTextField(
             value = value,
             onValueChange = { newValue ->
+                if (editMode != EditMode.TEXT) return@BasicTextField
+
                 val oldText = value.text
                 val oldSelection = value.selection
                 val newText = newValue.text
@@ -769,6 +853,7 @@ private fun ChecklistBlock(
 @Composable
 private fun BulletBlock(
     item: NoteBlock.BulletItem,
+    editMode: EditMode,
     autoFocus: Boolean,
     onTextChange: (String) -> Unit,
     onEnter: (wasEmpty: Boolean) -> Unit,
@@ -789,6 +874,8 @@ private fun BulletBlock(
         BasicTextField(
             value = value,
             onValueChange = { newValue ->
+                if (editMode != EditMode.TEXT) return@BasicTextField
+
                 val oldText = value.text
                 val oldSelection = value.selection
                 val newText = newValue.text
@@ -838,6 +925,7 @@ private fun BulletBlock(
 @Composable
 private fun NumberedBlock(
     item: NoteBlock.NumberedItem,
+    editMode: EditMode,
     autoFocus: Boolean,
     onTextChange: (String) -> Unit,
     onEnter: (wasEmpty: Boolean) -> Unit,
@@ -858,6 +946,8 @@ private fun NumberedBlock(
         BasicTextField(
             value = value,
             onValueChange = { newValue ->
+                if (editMode != EditMode.TEXT) return@BasicTextField
+
                 val oldText = value.text
                 val newText = newValue.text
 
@@ -945,6 +1035,94 @@ private fun BottomFormattingBar(
         }
         IconButton(onClick = onUnderline) {
             Icon(Icons.Filled.FormatUnderlined, contentDescription = "Underline", tint = Color.Black)
+        }
+    }
+}
+
+@Composable
+private fun DrawingOverlay(
+    modifier: Modifier = Modifier,
+    drawingState: DrawingState,
+    isInputEnabled: Boolean,
+    onUpdateDrawingState: ((DrawingState) -> DrawingState) -> Unit
+) {
+    val inputModifier = if (isInputEnabled) {
+        Modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+
+                // Start a new stroke with the initial down position
+                var currentStroke = Note.Path(
+                    points = listOf(Note.Point(down.position.x, down.position.y))
+                )
+                onUpdateDrawingState { state ->
+                    state.copy(currentStroke = currentStroke)
+                }
+
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val pointer = event.changes.firstOrNull { it.id == down.id }
+                    if (pointer == null || !pointer.pressed) {
+                        break
+                    }
+                    val pos = pointer.position
+                    // Append new point by creating a new list (Note.Path.points is immutable)
+                    currentStroke = currentStroke.copy(
+                        points = currentStroke.points + Note.Point(pos.x, pos.y)
+                    )
+                    onUpdateDrawingState { state ->
+                        state.copy(currentStroke = currentStroke)
+                    }
+                    pointer.consume()
+                }
+
+                val finishedStroke = currentStroke
+                if (finishedStroke.points.size > 1) {
+                    onUpdateDrawingState { state ->
+                        state.copy(
+                            strokes = state.strokes + finishedStroke,
+                            currentStroke = null
+                        )
+                    }
+                } else {
+                    onUpdateDrawingState { state ->
+                        state.copy(currentStroke = null)
+                    }
+                }
+            }
+        }
+    } else {
+        Modifier // no pointer input; overlay is visual-only
+    }
+
+    Canvas(modifier = modifier.then(inputModifier)) {
+        // Draw all persisted strokes
+        val strokeWidth = 4.dp.toPx()
+        fun Note.Path.toPath(): Path {
+            val p = Path()
+            val pts = points
+            if (pts.isEmpty()) return p
+            p.moveTo(pts[0].x, pts[0].y)
+            for (i in 1 until pts.size) {
+                p.lineTo(pts[i].x, pts[i].y)
+            }
+            return p
+        }
+
+        drawingState.strokes.forEach { stroke ->
+            drawPath(
+                path = stroke.toPath(),
+                color = Color.Black,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
+            )
+        }
+
+        drawingState.currentStroke?.let { stroke ->
+            drawPath(
+                path = stroke.toPath(),
+                color = Color.Black,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
+            )
         }
     }
 }
