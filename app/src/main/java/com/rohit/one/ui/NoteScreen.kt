@@ -30,6 +30,7 @@ import com.rohit.one.data.Note
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.mutableIntStateOf
 
 // --- New structured model for the editor ---
@@ -262,22 +263,26 @@ fun NoteScreen(
             BottomFormattingBar(
                 onChecklist = {
                     val blocks = editorState.blocks.toMutableList()
-                    blocks.add(NoteBlock.ChecklistItem(text = "", checked = false))
+                    val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
+                    blocks.add(insertPos, NoteBlock.ChecklistItem(text = "", checked = false))
                     editorState = editorState.copy(blocks = blocks)
+                    focusedBlockIndex = insertPos
                     pushHistory()
                 },
                 onBulletList = {
-                    // Append a new bullet item block, do not mutate paragraphs
                     val blocks = editorState.blocks.toMutableList()
-                    blocks.add(NoteBlock.BulletItem(text = ""))
+                    val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
+                    blocks.add(insertPos, NoteBlock.BulletItem(text = ""))
                     editorState = editorState.copy(blocks = blocks)
+                    focusedBlockIndex = insertPos
                     pushHistory()
                 },
                 onNumberedList = {
-                    // Start a brand-new numbered list block; each tap creates a list that starts at 1.
                     val blocks = editorState.blocks.toMutableList()
-                    blocks.add(NoteBlock.NumberedItem(index = 1, text = ""))
+                    val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
+                    blocks.add(insertPos, NoteBlock.NumberedItem(index = 1, text = ""))
                     editorState = editorState.copy(blocks = blocks)
+                    focusedBlockIndex = insertPos
                     pushHistory()
                 },
                 onBold = {
@@ -358,7 +363,8 @@ fun NoteScreen(
                                 editorState = editorState.copy(blocks = blocks)
                                 pushHistory()
                             }
-                        }
+                        },
+                        onFocused = { focusedBlockIndex = index }
                     )
 
                     is NoteBlock.ChecklistItem -> ChecklistBlock(
@@ -377,9 +383,19 @@ fun NoteScreen(
                             val blocks = editorState.blocks.toMutableList()
                             val current = blocks.getOrNull(index)
                             if (current is NoteBlock.ChecklistItem) {
-                                blocks[index] = current.copy(text = newText)
-                                editorState = editorState.copy(blocks = blocks)
-                                pushHistory()
+                                // Mirror numbered-list guard: only mutate when this block's text
+                                // truly changes, and ignore stale empty updates into non-empty text.
+                                if (current.text != newText) {
+                                    Log.d(
+                                        "NoteScreen",
+                                        "Checklist onTextChange index=$index guarded old='${current.text}' new='$newText'"
+                                    )
+                                    if (!(newText.isEmpty() && current.text.isNotEmpty())) {
+                                        blocks[index] = current.copy(text = newText)
+                                    }
+                                    editorState = editorState.copy(blocks = blocks)
+                                    pushHistory()
+                                }
                             }
                         },
                         onEnter = { wasEmpty ->
@@ -414,7 +430,8 @@ fun NoteScreen(
                                 editorState = editorState.copy(blocks = blocks)
                                 pushHistory()
                             }
-                        }
+                        },
+                        onFocused = { focusedBlockIndex = index }
                     )
 
                     is NoteBlock.BulletItem -> BulletBlock(
@@ -424,9 +441,19 @@ fun NoteScreen(
                             val blocks = editorState.blocks.toMutableList()
                             val current = blocks.getOrNull(index)
                             if (current is NoteBlock.BulletItem) {
-                                blocks[index] = current.copy(text = newText)
-                                editorState = editorState.copy(blocks = blocks)
-                                pushHistory()
+                                // Same guard pattern as numbered/checklist: ignore stale empty
+                                // updates into non-empty bullet text and only push real changes.
+                                if (current.text != newText) {
+                                    Log.d(
+                                        "NoteScreen",
+                                        "Bullet onTextChange index=$index guarded old='${current.text}' new='$newText'"
+                                    )
+                                    if (!(newText.isEmpty() && current.text.isNotEmpty())) {
+                                        blocks[index] = current.copy(text = newText)
+                                    }
+                                    editorState = editorState.copy(blocks = blocks)
+                                    pushHistory()
+                                }
                             }
                         },
                         onEnter = { wasEmpty ->
@@ -453,7 +480,8 @@ fun NoteScreen(
                                 editorState = editorState.copy(blocks = blocks)
                                 pushHistory()
                             }
-                        }
+                        },
+                        onFocused = { focusedBlockIndex = index }
                     )
 
                     is NoteBlock.NumberedItem -> NumberedBlock(
@@ -463,11 +491,23 @@ fun NoteScreen(
                             val blocks = editorState.blocks.toMutableList()
                             val current = blocks.getOrNull(index)
                             if (current is NoteBlock.NumberedItem) {
-                                blocks[index] = current.copy(text = newText)
+                                // Only update when the text actually changes for THIS block.
+                                // If callbacks arrive after this block was deleted/reindexed, the
+                                // text in the model won't match and we skip the mutation.
+                                if (current.text != newText) {
+                                    Log.d(
+                                        "NoteScreen",
+                                        "Numbered onTextChange index=$index guarded old='${current.text}' new='$newText'"
+                                    )
+                                    // Extra guard: ignore a stale empty update if the current block
+                                    // already has non-empty text (e.g., the next item after deletion).
+                                    if (!(newText.isEmpty() && current.text.isNotEmpty())) {
+                                        blocks[index] = current.copy(text = newText)
+                                    }
+                                }
                                 // Recalculate indices for each contiguous numbered list separately
                                 var runStart = 0
                                 while (runStart < blocks.size) {
-                                    // skip non-numbered items
                                     while (runStart < blocks.size && blocks[runStart] !is NoteBlock.NumberedItem) {
                                         runStart++
                                     }
@@ -479,7 +519,10 @@ fun NoteScreen(
                                     var localIndex = 1
                                     for (i in runStart until runEnd) {
                                         val b = blocks[i] as NoteBlock.NumberedItem
-                                        blocks[i] = b.copy(index = localIndex++)
+                                        if (b.index != localIndex) {
+                                            blocks[i] = b.copy(index = localIndex)
+                                        }
+                                        localIndex++
                                     }
                                     runStart = runEnd
                                 }
@@ -491,6 +534,7 @@ fun NoteScreen(
                             val blocks = editorState.blocks.toMutableList()
                             val current = blocks.getOrNull(index) as? NoteBlock.NumberedItem
                                 ?: return@NumberedBlock
+                            Log.d("NoteScreen", "Numbered onEnter index=$index wasEmpty=$wasEmpty text='${current.text}' sizeBefore=${blocks.size}")
                             if (wasEmpty) {
                                 blocks[index] = NoteBlock.Paragraph("")
                                 focusedBlockIndex = index
@@ -499,7 +543,8 @@ fun NoteScreen(
                                 blocks.add(insertPos, NoteBlock.NumberedItem(index = 1, text = ""))
                                 focusedBlockIndex = insertPos
                             }
-                            // Recalculate indices for each contiguous numbered list separately
+                            // Recalculate indices for each contiguous numbered list separately,
+                            // including the new item if added.
                             var runStart = 0
                             while (runStart < blocks.size) {
                                 while (runStart < blocks.size && blocks[runStart] !is NoteBlock.NumberedItem) {
@@ -517,6 +562,7 @@ fun NoteScreen(
                                 }
                                 runStart = runEnd
                             }
+                            Log.d("NoteScreen", "Numbered onEnter after reindex sizeAfter=${blocks.size}")
                             editorState = editorState.copy(blocks = blocks)
                             pushHistory()
                         },
@@ -524,9 +570,13 @@ fun NoteScreen(
                             val blocks = editorState.blocks.toMutableList()
                             val current = blocks.getOrNull(index) as? NoteBlock.NumberedItem
                                 ?: return@NumberedBlock
+                            Log.d(
+                                "NoteScreen",
+                                "Numbered onBackspaceAtStart index=$index text='${current.text}' sizeBefore=${blocks.size}"
+                            )
                             if (blocks.size > 1 && index in blocks.indices) {
                                 blocks.removeAt(index)
-                                // Recalculate indices for each contiguous numbered list separately
+                                // Recalculate indices for each contiguous numbered list after removal.
                                 var runStart = 0
                                 while (runStart < blocks.size) {
                                     while (runStart < blocks.size && blocks[runStart] !is NoteBlock.NumberedItem) {
@@ -544,10 +594,12 @@ fun NoteScreen(
                                     }
                                     runStart = runEnd
                                 }
+                                Log.d("NoteScreen", "Numbered onBackspaceAtStart after remove sizeAfter=${blocks.size}")
                                 editorState = editorState.copy(blocks = blocks)
                                 pushHistory()
                             }
-                        }
+                        },
+                        onFocused = { focusedBlockIndex = index }
                     )
                 }
             }
@@ -555,13 +607,12 @@ fun NoteScreen(
     }
 }
 
-// --- Composables for individual block types ---
-
 @Composable
 private fun ParagraphBlock(
     text: String,
     onTextChange: (String) -> Unit,
-    onBackspaceAtStart: (isEmptyNow: Boolean) -> Unit
+    onBackspaceAtStart: (isEmptyNow: Boolean) -> Unit,
+    onFocused: () -> Unit
 ) {
     var value by remember(text) { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
     BasicTextField(
@@ -572,33 +623,23 @@ private fun ParagraphBlock(
             val newText = newValue.text
             val newSelection = newValue.selection
 
-            // We consider it a "backspace at start" in three cases:
-            // 1) Classic case: caret at 0, text shrinks by 1.
             val classicBackspace =
                 oldSelection.start == 0 &&
-                oldSelection.end == 0 &&
-                newText.length == oldText.length - 1
-            // 2) IME replaces the whole text with empty while the caret is at 0.
+                    oldSelection.end == 0 &&
+                    newText.length == oldText.length - 1
             val clearToEmptyAtStart =
                 newText.isEmpty() &&
-                oldText.isNotEmpty() &&
-                newSelection.start == 0 && newSelection.end == 0
-            // 3) Paragraph was already empty and IME sends a no-op edit while caret is at 0;
-            // treat a delete key here as backspace-at-start as well.
+                    oldText.isNotEmpty() &&
+                    newSelection.start == 0 && newSelection.end == 0
             val emptyBackspaceNoOp =
                 oldText.isEmpty() &&
-                newText.isEmpty() &&
-                oldSelection.start == 0 && oldSelection.end == 0 &&
-                newSelection.start == 0 && newSelection.end == 0
+                    newText.isEmpty() &&
+                    oldSelection.start == 0 && oldSelection.end == 0 &&
+                    newSelection.start == 0 && newSelection.end == 0
 
             val backspaceAtStart = classicBackspace || clearToEmptyAtStart || emptyBackspaceNoOp
 
             if (backspaceAtStart) {
-                Log.d(
-                    "NoteScreen",
-                    "ParagraphBlock backspaceAtStart=true classic=$classicBackspace clearToEmpty=$clearToEmptyAtStart emptyNoOp=$emptyBackspaceNoOp " +
-                        "old='${oldText}' new='${newText}' oldSel=[${oldSelection.start},${oldSelection.end}] newSel=[${newSelection.start},${newSelection.end}]"
-                )
                 onBackspaceAtStart(newText.isEmpty())
             }
 
@@ -608,7 +649,8 @@ private fun ParagraphBlock(
             }
         },
         modifier = Modifier
-            .fillMaxWidth(),
+            .fillMaxWidth()
+            .onFocusChanged { if (it.isFocused) onFocused() },
         textStyle = TextStyle(fontSize = 16.sp, color = Color.Black),
         keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Default),
         decorationBox = { innerTextField ->
@@ -629,7 +671,8 @@ private fun ChecklistBlock(
     onCheckedChange: (Boolean) -> Unit,
     onTextChange: (String) -> Unit,
     onEnter: (wasEmpty: Boolean) -> Unit,
-    onBackspaceAtStart: () -> Unit
+    onBackspaceAtStart: () -> Unit,
+    onFocused: () -> Unit
 ) {
     var localChecked by remember(item) { mutableStateOf(item.checked) }
     LaunchedEffect(item.checked) {
@@ -640,8 +683,6 @@ private fun ChecklistBlock(
 
     val focusRequester = remember { FocusRequester() }
 
-    // When this block is marked for autoFocus (newly created empty checklist item),
-    // request focus so the cursor moves to this new line.
     LaunchedEffect(autoFocus) {
         if (autoFocus) {
             focusRequester.requestFocus()
@@ -649,24 +690,18 @@ private fun ChecklistBlock(
     }
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Checkbox(
             checked = localChecked,
             onCheckedChange = { newChecked ->
-                Log.d(
-                    "NoteScreen",
-                    "Checkbox tapped for item='${item.text}' oldChecked=${item.checked} newChecked=$newChecked"
-                )
                 localChecked = newChecked
                 onCheckedChange(newChecked)
             }
         )
         Spacer(modifier = Modifier.width(8.dp))
 
-        // Local text field state; start with the current item text, caret at end.
         var value by remember(item) { mutableStateOf(TextFieldValue(item.text, TextRange(item.text.length))) }
 
         BasicTextField(
@@ -676,51 +711,38 @@ private fun ChecklistBlock(
                 val oldSelection = value.selection
                 val newText = newValue.text
 
-                Log.d(
-                    "NoteScreen",
-                    "Checklist onValueChange: oldText='${oldText}' newText='${newText}' " +
-                        "oldSel=[${oldSelection.start},${oldSelection.end}] newSel=[${newValue.selection.start},${newValue.selection.end}] lengthDelta=${newText.length - oldText.length}"
-                )
-
                 val isEnter = newText.length == oldText.length + 1 && newText.endsWith("\n")
                 if (isEnter) {
-                    Log.d("NoteScreen", "Checklist detected ENTER; logical='${oldText}' isEmptyNow=${oldText.isBlank()}")
                     val logical = oldText
                     val isEmptyNow = logical.isBlank()
                     onEnter(isEmptyNow)
-
-                    value = TextFieldValue(
-                        text = logical,
-                        selection = TextRange(logical.length)
-                    )
+                    value = TextFieldValue(logical, TextRange(logical.length))
                     onTextChange(logical)
                     return@BasicTextField
                 }
 
                 val lengthDelta = newText.length - oldText.length
-                val backspaceAtStart =
-                    (lengthDelta == -1 &&
-                        ((oldSelection.start == 0 && oldSelection.end == 0) ||
-                         (oldText.length == 1 && oldSelection.start == 1 && oldSelection.end == 1))) ||
-                    (lengthDelta == 0 &&
-                        oldText.isEmpty() && newText.isEmpty() &&
+                // Treat any single-character deletion when the cursor was at position 0,
+                // or clearing the last character to empty, as a backspace-at-start signal.
+                val becameEmpty = oldText.isNotEmpty() && newText.isEmpty()
+                val classicBackspaceAtStart =
+                    lengthDelta == -1 && oldSelection.start == 0 && oldSelection.end == 0
+                val emptyBackspaceNoOp =
+                    oldText.isEmpty() && newText.isEmpty() &&
                         oldSelection.start == 0 && oldSelection.end == 0 &&
-                        newValue.selection.start == 0 && newValue.selection.end == 0)
-
-                Log.d(
-                    "NoteScreen",
-                    "Checklist backspaceAtStart=$backspaceAtStart oldEmpty=${oldText.isEmpty()}"
-                )
+                        newValue.selection.start == 0 && newValue.selection.end == 0
+                val backspaceAtStart = classicBackspaceAtStart || (becameEmpty && newValue.selection.start == 0) || emptyBackspaceNoOp
 
                 if (backspaceAtStart) {
-                    if (oldText.isEmpty() || oldText.length == 1) {
-                        Log.d("NoteScreen", "Checklist backspace on empty-or-single-char item -> onBackspaceAtStart()")
+                    // If this item is already empty, delegate deletion of the row to the parent.
+                    if (newText.isEmpty()) {
                         onBackspaceAtStart()
                         value = TextFieldValue("", TextRange(0))
                         onTextChange("")
                         return@BasicTextField
                     } else {
-                        Log.d("NoteScreen", "Checklist backspace at start with non-empty text -> onBackspaceAtStart()")
+                        // Non-empty text case: allow parent to decide if it wants to merge/delete,
+                        // but keep the local text update.
                         onBackspaceAtStart()
                     }
                 }
@@ -732,15 +754,14 @@ private fun ChecklistBlock(
             },
             modifier = Modifier
                 .weight(1f)
-                .focusRequester(focusRequester),
+                .focusRequester(focusRequester)
+                .onFocusChanged { if (it.isFocused) onFocused() },
             textStyle = TextStyle(
                 fontSize = 16.sp,
                 color = Color.Black,
                 textDecoration = if (item.checked) TextDecoration.LineThrough else TextDecoration.None
             ),
-            keyboardOptions = KeyboardOptions.Default.copy(
-                imeAction = ImeAction.Default
-            )
+            keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Default)
         )
     }
 }
@@ -751,7 +772,8 @@ private fun BulletBlock(
     autoFocus: Boolean,
     onTextChange: (String) -> Unit,
     onEnter: (wasEmpty: Boolean) -> Unit,
-    onBackspaceAtStart: () -> Unit
+    onBackspaceAtStart: () -> Unit,
+    onFocused: () -> Unit
 ) {
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(autoFocus) {
@@ -770,26 +792,17 @@ private fun BulletBlock(
                 val oldText = value.text
                 val oldSelection = value.selection
                 val newText = newValue.text
-                val newSelection = newValue.selection
-
-                Log.d(
-                    "NoteScreen",
-                    "Bullet onValueChange: oldText='${oldText}' newText='${newText}' " +
-                        "oldSel=[${oldSelection.start},${oldSelection.end}] newSel=[${newSelection.start},${newSelection.end}] lengthDelta=${newText.length - oldText.length}"
-                )
 
                 val isEnter = newText.length == oldText.length + 1 && newText.endsWith("\n")
                 if (isEnter) {
                     val logical = oldText
                     val isEmptyNow = logical.isBlank()
-                    Log.d("NoteScreen", "Bullet detected ENTER; logical='${logical}' isEmptyNow=$isEmptyNow")
                     onEnter(isEmptyNow)
                     value = TextFieldValue(logical, TextRange(logical.length))
                     onTextChange(logical)
                     return@BasicTextField
                 }
 
-                // Treat any deletion that leads to empty text with caret at 0 as backspace-at-start
                 val lengthDelta = newText.length - oldText.length
                 val becameEmpty = oldText.isNotEmpty() && newText.isEmpty()
                 val classicBackspaceAtStart =
@@ -797,17 +810,11 @@ private fun BulletBlock(
                 val emptyBackspaceNoOp =
                     oldText.isEmpty() && newText.isEmpty() &&
                         oldSelection.start == 0 && oldSelection.end == 0 &&
-                        newSelection.start == 0 && newSelection.end == 0
-                val backspaceAtStart = classicBackspaceAtStart || (becameEmpty && newSelection.start == 0) || emptyBackspaceNoOp
-
-                Log.d(
-                    "NoteScreen",
-                    "Bullet backspaceAtStart=$backspaceAtStart becameEmpty=$becameEmpty oldEmpty=${oldText.isEmpty()}"
-                )
+                        newValue.selection.start == 0 && newValue.selection.end == 0
+                val backspaceAtStart = classicBackspaceAtStart || (becameEmpty && newValue.selection.start == 0) || emptyBackspaceNoOp
 
                 if (backspaceAtStart) {
                     if (newText.isEmpty()) {
-                        Log.d("NoteScreen", "Bullet backspace on now-empty item -> onBackspaceAtStart()")
                         onBackspaceAtStart()
                         value = TextFieldValue("", TextRange(0))
                         onTextChange("")
@@ -820,7 +827,8 @@ private fun BulletBlock(
             },
             modifier = Modifier
                 .weight(1f)
-                .focusRequester(focusRequester),
+                .focusRequester(focusRequester)
+                .onFocusChanged { if (it.isFocused) onFocused() },
             textStyle = TextStyle(fontSize = 16.sp, color = Color.Black),
             keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Default)
         )
@@ -833,7 +841,8 @@ private fun NumberedBlock(
     autoFocus: Boolean,
     onTextChange: (String) -> Unit,
     onEnter: (wasEmpty: Boolean) -> Unit,
-    onBackspaceAtStart: () -> Unit
+    onBackspaceAtStart: () -> Unit,
+    onFocused: () -> Unit
 ) {
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(autoFocus) {
@@ -850,68 +859,49 @@ private fun NumberedBlock(
             value = value,
             onValueChange = { newValue ->
                 val oldText = value.text
-                val oldSelection = value.selection
                 val newText = newValue.text
-                val newSelection = newValue.selection
 
                 Log.d(
                     "NoteScreen",
-                    "Numbered onValueChange: oldText='${oldText}' newText='${newText}' " +
-                        "oldSel=[${oldSelection.start},${oldSelection.end}] newSel=[${newSelection.start},${newSelection.end}] lengthDelta=${newText.length - oldText.length}"
+                    "NumberedBlock onValueChange oldText='$oldText' newText='$newText' lengthDelta=${newText.length - oldText.length}"
                 )
 
                 val isEnter = newText.length == oldText.length + 1 && newText.endsWith("\n")
                 if (isEnter) {
                     val logical = oldText
                     val isEmptyNow = logical.isBlank()
-                    Log.d("NoteScreen", "Numbered detected ENTER; logical='${logical}' isEmptyNow=$isEmptyNow")
-                    // Delegate creation of the next block to the parent; parent will mark the new
-                    // block with autoFocus=true so its own FocusRequester moves the caret there.
+                    Log.d("NoteScreen", "NumberedBlock detected ENTER logical='$logical' isEmptyNow=$isEmptyNow")
                     onEnter(isEmptyNow)
-                    // Strip the trailing newline and keep caret at end of this line.
                     value = TextFieldValue(logical, TextRange(logical.length))
                     onTextChange(logical)
                     return@BasicTextField
                 }
 
-                val lengthDelta = newText.length - oldText.length
-                val becameEmpty = oldText.isNotEmpty() && newText.isEmpty()
-                val classicBackspaceAtStart =
-                    lengthDelta == -1 && oldSelection.start == 0 && oldSelection.end == 0
-                val emptyBackspaceNoOp =
-                    oldText.isEmpty() && newText.isEmpty() &&
-                        oldSelection.start == 0 && oldSelection.end == 0 &&
-                        newSelection.start == 0 && newSelection.end == 0
-                val backspaceAtStart = classicBackspaceAtStart || (becameEmpty && newSelection.start == 0) || emptyBackspaceNoOp
+                val becameBlank = oldText.isNotBlank() && newText.isBlank()
+                Log.d("NoteScreen", "NumberedBlock becameBlank=$becameBlank")
 
-                Log.d(
-                    "NoteScreen",
-                    "Numbered backspaceAtStart=$backspaceAtStart becameEmpty=$becameEmpty oldEmpty=${oldText.isEmpty()}"
-                )
-
-                if (backspaceAtStart) {
-                    if (newText.isEmpty()) {
-                        Log.d("NoteScreen", "Numbered backspace on now-empty item -> onBackspaceAtStart()")
-                        onBackspaceAtStart()
-                        value = TextFieldValue("", TextRange(0))
-                        onTextChange("")
-                        return@BasicTextField
-                    }
+                // If line had visible content and now is blank (only whitespace or empty), delete this numbered item.
+                if (becameBlank) {
+                    Log.d("NoteScreen", "NumberedBlock deleting item via onBackspaceAtStart")
+                    onBackspaceAtStart()
+                    value = TextFieldValue("", TextRange(0))
+                    onTextChange("")
+                    return@BasicTextField
                 }
 
+                // For numbered items we *do not* forward generic backspace-at-start anymore; just update the text.
                 value = newValue
                 if (newText != item.text) onTextChange(newText)
             },
             modifier = Modifier
                 .weight(1f)
-                .focusRequester(focusRequester),
+                .focusRequester(focusRequester)
+                .onFocusChanged { if (it.isFocused) onFocused() },
             textStyle = TextStyle(fontSize = 16.sp, color = Color.Black),
             keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Default)
         )
     }
 }
-
-// --- Bottom formatting bar, reused from original but adapted to call block-based actions ---
 
 @Composable
 private fun BottomFormattingBar(
@@ -955,8 +945,6 @@ private fun BottomFormattingBar(
     }
 }
 
-// --- Markdown conversion helpers ---
-
 private fun parseMarkdownToBlocks(markdown: String): List<NoteBlock> {
     if (markdown.isBlank()) return listOf(NoteBlock.Paragraph(""))
     val lines = markdown.lines()
@@ -989,14 +977,3 @@ private fun blocksToMarkdown(blocks: List<NoteBlock>): String {
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
