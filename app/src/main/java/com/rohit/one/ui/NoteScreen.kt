@@ -2,11 +2,22 @@ package com.rohit.one.ui
 
 import android.util.Log
 import android.widget.Toast
-import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.BasicTextField
@@ -16,39 +27,66 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Colorize
+import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.FormatItalic
+import androidx.compose.material.icons.filled.FormatListNumbered
+import androidx.compose.material.icons.filled.FormatUnderlined
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.RemoveCircleOutline
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rohit.one.data.Note
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.input.TransformedText
-import androidx.compose.ui.text.input.OffsetMapping
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.hypot
 
 // --- New structured model for the editor ---
 
@@ -350,7 +388,6 @@ fun NoteScreen(
                         val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
                         blocks.add(insertPos, NoteBlock.ChecklistItem(text = "", checked = false))
                         editorState = editorState.copy(blocks = blocks)
-                        focusedBlockIndex = insertPos
                         pushHistory()
                     }
                 },
@@ -360,7 +397,6 @@ fun NoteScreen(
                         val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
                         blocks.add(insertPos, NoteBlock.BulletItem(text = ""))
                         editorState = editorState.copy(blocks = blocks)
-                        focusedBlockIndex = insertPos
                         pushHistory()
                     }
                 },
@@ -370,7 +406,6 @@ fun NoteScreen(
                         val insertPos = if (focusedBlockIndex in blocks.indices) focusedBlockIndex + 1 else blocks.size
                         blocks.add(insertPos, NoteBlock.NumberedItem(index = 1, text = ""))
                         editorState = editorState.copy(blocks = blocks)
-                        focusedBlockIndex = insertPos
                         pushHistory()
                     }
                 },
@@ -458,26 +493,6 @@ fun NoteScreen(
                                     }
                                 }
                             },
-                            onBackspaceAtStart = { isEmptyNow: Boolean ->
-                                val blocks = editorState.blocks.toMutableList()
-                                Log.d(
-                                    "NoteScreen",
-                                    "Paragraph onBackspaceAtStart: index=$index isEmptyNow=$isEmptyNow sizeBefore=${blocks.size}"
-                                )
-
-                                // New behavior: backspace at start only ever removes this paragraph
-                                // (when empty) and never deletes the block above.
-                                if (isEmptyNow && blocks.size > 1 && index in blocks.indices) {
-                                    Log.d(
-                                        "NoteScreen",
-                                        "Paragraph backspace: removing empty paragraph at index=$index"
-                                    )
-                                    blocks.removeAt(index)
-                                    editorState = editorState.copy(blocks = blocks)
-                                    pushHistory()
-                                    blockSelection.remove(index)
-                                }
-                            },
                             onFocused = { focusedBlockIndex = index }
                         )
 
@@ -515,8 +530,7 @@ fun NoteScreen(
                             },
                             onEnter = { wasEmpty: Boolean ->
                                 val blocks = editorState.blocks.toMutableList()
-                                val current = blocks.getOrNull(index) as? NoteBlock.ChecklistItem
-                                if (current == null) return@ChecklistBlock
+                                if (blocks.getOrNull(index) !is NoteBlock.ChecklistItem) return@ChecklistBlock
                                 if (wasEmpty) {
                                     blocks[index] = NoteBlock.Paragraph("")
                                     focusedBlockIndex = index
@@ -531,7 +545,7 @@ fun NoteScreen(
                             onBackspaceAtStart = {
                                 val blocks = editorState.blocks.toMutableList()
                                 val current = blocks.getOrNull(index) as? NoteBlock.ChecklistItem
-                                if (current == null) return@ChecklistBlock
+                                    ?: return@ChecklistBlock
 
                                 Log.d(
                                     "NoteScreen",
@@ -574,8 +588,7 @@ fun NoteScreen(
                             },
                             onEnter = { wasEmpty: Boolean ->
                                 val blocks = editorState.blocks.toMutableList()
-                                val current = blocks.getOrNull(index) as? NoteBlock.BulletItem
-                                if (current == null) return@BulletBlock
+                                if (blocks.getOrNull(index) !is NoteBlock.BulletItem) return@BulletBlock
                                 if (wasEmpty) {
                                     blocks[index] = NoteBlock.Paragraph("")
                                     focusedBlockIndex = index
@@ -589,8 +602,7 @@ fun NoteScreen(
                             },
                             onBackspaceAtStart = {
                                 val blocks = editorState.blocks.toMutableList()
-                                val current = blocks.getOrNull(index) as? NoteBlock.BulletItem
-                                if (current == null) return@BulletBlock
+                                if (blocks.getOrNull(index) !is NoteBlock.BulletItem) return@BulletBlock
                                 if (blocks.size > 1 && index in blocks.indices) {
                                     blocks.removeAt(index)
                                     editorState = editorState.copy(blocks = blocks)
@@ -650,7 +662,7 @@ fun NoteScreen(
                             onEnter = { wasEmpty: Boolean ->
                                 val blocks = editorState.blocks.toMutableList()
                                 val current = blocks.getOrNull(index) as? NoteBlock.NumberedItem
-                                if (current == null) return@NumberedBlock
+                                    ?: return@NumberedBlock
                                 Log.d("NoteScreen", "Numbered onEnter index=$index wasEmpty=$wasEmpty text='${current.text}' sizeBefore=${blocks.size}")
                                 if (wasEmpty) {
                                     blocks[index] = NoteBlock.Paragraph("")
@@ -686,7 +698,7 @@ fun NoteScreen(
                             onBackspaceAtStart = {
                                 val blocks = editorState.blocks.toMutableList()
                                 val current = blocks.getOrNull(index) as? NoteBlock.NumberedItem
-                                if (current == null) return@NumberedBlock
+                                    ?: return@NumberedBlock
                                 Log.d(
                                     "NoteScreen",
                                     "Numbered onBackspaceAtStart index=$index text='${current.text}' sizeBefore=${blocks.size}"
@@ -797,7 +809,6 @@ private fun ParagraphBlock(
     editMode: EditMode,
     selection: TextRange,
     onTextChange: (String, List<StyleSpan>, TextRange) -> Unit,
-    onBackspaceAtStart: (isEmptyNow: Boolean) -> Unit,
     onFocused: () -> Unit
 ) {
     var value by remember(text, spans, selection) { mutableStateOf(TextFieldValue(text, selection)) }
@@ -826,7 +837,6 @@ private fun ParagraphBlock(
                     null
                 }
             }
-            value = newValue
             if (newText != text || newSpans != spans || newSelection != selection) {
                 onTextChange(newText, newSpans, newSelection)
             }
@@ -900,11 +910,10 @@ private fun ChecklistBlock(
 
                 val isEnter = newText.length == oldText.length + 1 && newText.endsWith("\n")
                 if (isEnter) {
-                    val logical = oldText
-                    val isEmptyNow = logical.isBlank()
+                    val isEmptyNow = oldText.isBlank()
                     onEnter(isEmptyNow)
-                    value = TextFieldValue(logical, TextRange(logical.length))
-                    onTextChange(logical)
+                    value = TextFieldValue(oldText, TextRange(oldText.length))
+                    onTextChange(oldText)
                     return@BasicTextField
                 }
 
@@ -985,11 +994,10 @@ private fun BulletBlock(
 
                 val isEnter = newText.length == oldText.length + 1 && newText.endsWith("\n")
                 if (isEnter) {
-                    val logical = oldText
-                    val isEmptyNow = logical.isBlank()
+                    val isEmptyNow = oldText.isBlank()
                     onEnter(isEmptyNow)
-                    value = TextFieldValue(logical, TextRange(logical.length))
-                    onTextChange(logical)
+                    value = TextFieldValue(oldText, TextRange(oldText.length))
+                    onTextChange(oldText)
                     return@BasicTextField
                 }
 
@@ -1061,12 +1069,11 @@ private fun NumberedBlock(
 
                 val isEnter = newText.length == oldText.length + 1 && newText.endsWith("\n")
                 if (isEnter) {
-                    val logical = oldText
-                    val isEmptyNow = logical.isBlank()
-                    Log.d("NoteScreen", "NumberedBlock detected ENTER logical='$logical' isEmptyNow=$isEmptyNow")
+                    val isEmptyNow = oldText.isBlank()
+                    Log.d("NoteScreen", "NumberedBlock detected ENTER logical='$oldText' isEmptyNow=$isEmptyNow")
                     onEnter(isEmptyNow)
-                    value = TextFieldValue(logical, TextRange(logical.length))
-                    onTextChange(logical)
+                    value = TextFieldValue(oldText, TextRange(oldText.length))
+                    onTextChange(oldText)
                     return@BasicTextField
                 }
 
@@ -1155,8 +1162,6 @@ private fun DrawingOverlay(
             Modifier.pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    var lastPos = down.position
-                    var erased = false
                     onUpdateDrawingState { state -> state }
                     while (true) {
                         val event = awaitPointerEvent()
@@ -1169,13 +1174,12 @@ private fun DrawingOverlay(
                                 val filtered = stroke.points.filterNot { pt ->
                                     val dx = pt.x - pos.x
                                     val dy = pt.y - pos.y
-                                    Math.hypot(dx.toDouble(), dy.toDouble()) < 16.0 // 16px threshold (was 32.0)
+                                    hypot(dx.toDouble(), dy.toDouble()) < 16.0 // 16px threshold (was 32.0)
                                 }
                                 if (filtered.size >= 2) listOf(stroke.copy(points = filtered)) else emptyList()
                             }
                             state.copy(strokes = newStrokes, currentStroke = null)
                         }
-                        lastPos = pos
                         pointer.consume()
                     }
                 }
@@ -1273,7 +1277,7 @@ private fun parseMarkdownToBlocks(markdown: String): List<NoteBlock> {
             line.startsWith("• ") -> blocks.add(NoteBlock.BulletItem(text = line.removePrefix("• ")))
             Regex("^\\d+\\. ").containsMatchIn(line) -> {
                 val dotIndex = line.indexOf('.')
-                val num = line.substring(0, dotIndex).toIntOrNull() ?: 1
+                val num = line.take(dotIndex).toIntOrNull() ?: 1
                 val text = line.substring(dotIndex + 2)
                 blocks.add(NoteBlock.NumberedItem(index = num, text = text))
             }
@@ -1329,3 +1333,6 @@ private fun jsonToSpanList(json: String): List<StyleSpan> {
         emptyList()
     }
 }
+
+
+
