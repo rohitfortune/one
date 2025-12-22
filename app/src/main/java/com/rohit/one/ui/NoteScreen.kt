@@ -27,7 +27,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
@@ -39,11 +43,25 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.OffsetMapping
+import org.json.JSONArray
+import org.json.JSONObject
 
 // --- New structured model for the editor ---
 
+private enum class InlineStyle { Bold, Italic, Underline }
+
+// Represents a formatting span
+private data class StyleSpan(val start: Int, val end: Int, val style: InlineStyle)
+
 private sealed class NoteBlock {
-    data class Paragraph(var text: String) : NoteBlock()
+    data class Paragraph(
+        var text: String,
+        val spans: List<StyleSpan> = emptyList()
+    ) : NoteBlock()
     data class ChecklistItem(var text: String, var checked: Boolean) : NoteBlock()
     data class BulletItem(var text: String) : NoteBlock()
     data class NumberedItem(var index: Int, var text: String) : NoteBlock()
@@ -125,6 +143,9 @@ fun NoteScreen(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    // Track selection per paragraph block (move this above all usages)
+    val blockSelection = remember { mutableStateMapOf<Int, TextRange>() }
+
     // Parse existing markdown into simple blocks: lines starting with "[ ] " / "[x] " become checklist items.
     val initialText = note?.content ?: ""
     val initialBlocks = remember(initialText) { parseMarkdownToBlocks(initialText) }
@@ -172,6 +193,7 @@ fun NoteScreen(
     }
 
     var editMode by remember { mutableStateOf(EditMode.TEXT) }
+    var isEraserActive by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Color.White,
@@ -249,6 +271,7 @@ fun NoteScreen(
                 ) {
                     // Pen icon is the single toggle between TEXT and DRAW modes
                     IconButton(onClick = {
+                        if (isEraserActive) return@IconButton // Don't allow mode switch while eraser is active
                         val newMode = if (editMode == EditMode.TEXT) EditMode.DRAW else EditMode.TEXT
                         editMode = newMode
                         drawingState = drawingState.copy(
@@ -256,7 +279,6 @@ fun NoteScreen(
                             currentStroke = null
                         )
                         if (newMode == EditMode.DRAW) {
-                            // Leave text mode: clear focus and hide keyboard so typing stops.
                             focusManager.clearFocus(force = true)
                             keyboardController?.hide()
                         }
@@ -264,13 +286,28 @@ fun NoteScreen(
                         Icon(
                             Icons.Filled.Colorize,
                             contentDescription = "Toggle Draw Mode",
-                            tint = if (editMode == EditMode.DRAW) Color.Black else Color.Gray
+                            tint = if (editMode == EditMode.DRAW && !isEraserActive) Color.Black else Color.Gray
                         )
                     }
-                    // Erase and select remain disabled placeholders
-                    IconButton(onClick = { /* Erase mode can be added later */ }, enabled = false) {
-                        Icon(Icons.Filled.RemoveCircleOutline, contentDescription = "Erase Mode", tint = Color.LightGray)
+                    // Erase button: toggles eraser mode
+                    IconButton(
+                        onClick = {
+                            isEraserActive = !isEraserActive
+                            if (isEraserActive) {
+                                focusManager.clearFocus(force = true)
+                                editMode = EditMode.TEXT // Always leave draw mode when eraser is active
+                                drawingState = drawingState.copy(isDrawing = false, currentStroke = null)
+                            }
+                        },
+                        enabled = true
+                    ) {
+                        Icon(
+                            Icons.Filled.RemoveCircleOutline,
+                            contentDescription = "Eraser Mode",
+                            tint = if (isEraserActive) Color.Black else Color.LightGray
+                        )
                     }
+                    // Select mode remains disabled placeholder
                     IconButton(onClick = { /* Select mode can be added later */ }, enabled = false) {
                         Icon(Icons.Filled.TouchApp, contentDescription = "Select Mode", tint = Color.LightGray)
                     }
@@ -338,41 +375,49 @@ fun NoteScreen(
                     }
                 },
                 onBold = {
-                    if (editMode == EditMode.TEXT) {
-                        // Simple: append ** marker, real styling model would be richer
+                    if (editMode == EditMode.TEXT && focusedBlockIndex in editorState.blocks.indices) {
                         val blocks = editorState.blocks.toMutableList()
-                        if (blocks.isNotEmpty()) {
-                            val last = blocks.last()
-                            if (last is NoteBlock.Paragraph) {
-                                last.text += " **bold**"
+                        val block = blocks[focusedBlockIndex]
+                        if (block is NoteBlock.Paragraph) {
+                            val sel = blockSelection[focusedBlockIndex] ?: TextRange(block.text.length)
+                            if (!sel.collapsed) {
+                                val newSpans = toggleStyleSpan(block.spans, sel, InlineStyle.Bold)
+                                blocks[focusedBlockIndex] = block.copy(spans = newSpans)
                                 editorState = editorState.copy(blocks = blocks)
                                 pushHistory()
+                                blockSelection[focusedBlockIndex] = sel
                             }
                         }
                     }
                 },
                 onItalic = {
-                    if (editMode == EditMode.TEXT) {
+                    if (editMode == EditMode.TEXT && focusedBlockIndex in editorState.blocks.indices) {
                         val blocks = editorState.blocks.toMutableList()
-                        if (blocks.isNotEmpty()) {
-                            val last = blocks.last()
-                            if (last is NoteBlock.Paragraph) {
-                                last.text += " _italic_"
+                        val block = blocks[focusedBlockIndex]
+                        if (block is NoteBlock.Paragraph) {
+                            val sel = blockSelection[focusedBlockIndex] ?: TextRange(block.text.length)
+                            if (!sel.collapsed) {
+                                val newSpans = toggleStyleSpan(block.spans, sel, InlineStyle.Italic)
+                                blocks[focusedBlockIndex] = block.copy(spans = newSpans)
                                 editorState = editorState.copy(blocks = blocks)
                                 pushHistory()
+                                blockSelection[focusedBlockIndex] = sel
                             }
                         }
                     }
                 },
                 onUnderline = {
-                    if (editMode == EditMode.TEXT) {
+                    if (editMode == EditMode.TEXT && focusedBlockIndex in editorState.blocks.indices) {
                         val blocks = editorState.blocks.toMutableList()
-                        if (blocks.isNotEmpty()) {
-                            val last = blocks.last()
-                            if (last is NoteBlock.Paragraph) {
-                                last.text += " __underline__"
+                        val block = blocks[focusedBlockIndex]
+                        if (block is NoteBlock.Paragraph) {
+                            val sel = blockSelection[focusedBlockIndex] ?: TextRange(block.text.length)
+                            if (!sel.collapsed) {
+                                val newSpans = toggleStyleSpan(block.spans, sel, InlineStyle.Underline)
+                                blocks[focusedBlockIndex] = block.copy(spans = newSpans)
                                 editorState = editorState.copy(blocks = blocks)
                                 pushHistory()
+                                blockSelection[focusedBlockIndex] = sel
                             }
                         }
                     }
@@ -399,14 +444,17 @@ fun NoteScreen(
                     when (block) {
                         is NoteBlock.Paragraph -> ParagraphBlock(
                             text = block.text,
+                            spans = block.spans,
                             editMode = editMode,
-                            onTextChange = { newText: String ->
+                            selection = blockSelection[index] ?: TextRange(block.text.length),
+                            onTextChange = { newText, newSpans, newSelection ->
                                 if (editMode == EditMode.TEXT) {
                                     val blocks = editorState.blocks.toMutableList()
                                     val current = blocks.getOrNull(index)
                                     if (current is NoteBlock.Paragraph) {
-                                        blocks[index] = current.copy(text = newText)
+                                        blocks[index] = current.copy(text = newText, spans = newSpans)
                                         editorState = editorState.copy(blocks = blocks)
+                                        blockSelection[index] = newSelection
                                     }
                                 }
                             },
@@ -427,6 +475,7 @@ fun NoteScreen(
                                     blocks.removeAt(index)
                                     editorState = editorState.copy(blocks = blocks)
                                     pushHistory()
+                                    blockSelection.remove(index)
                                 }
                             },
                             onFocused = { focusedBlockIndex = index }
@@ -678,55 +727,108 @@ fun NoteScreen(
             DrawingOverlay(
                 modifier = Modifier.fillMaxSize(),
                 drawingState = drawingState,
-                isInputEnabled = drawingState.isDrawing,
+                isInputEnabled = (drawingState.isDrawing && !isEraserActive) || isEraserActive,
+                isEraserActive = isEraserActive,
                 onUpdateDrawingState = { transform -> drawingState = transform(drawingState) }
             )
         }
     }
 }
 
+// Utility: merge and toggle style spans
+private fun toggleStyleSpan(
+    spans: List<StyleSpan>,
+    selection: TextRange,
+    style: InlineStyle
+): List<StyleSpan> {
+    if (selection.collapsed) return spans
+    val (start, end) = selection.start to selection.end
+    val newSpans = spans.toMutableList()
+    // Remove any existing span of this style in the selection
+    val overlapping = newSpans.filter { it.style == style && it.start < end && it.end > start }
+    if (overlapping.isNotEmpty()) {
+        newSpans.removeAll(overlapping)
+        // Optionally, split spans if selection is in the middle
+        overlapping.forEach { span ->
+            if (span.start < start) newSpans.add(StyleSpan(span.start, start, style))
+            if (span.end > end) newSpans.add(StyleSpan(end, span.end, style))
+        }
+    } else {
+        newSpans.add(StyleSpan(start, end, style))
+    }
+    // Merge adjacent/overlapping spans of the same style
+    return newSpans.sortedWith(compareBy({ it.style.ordinal }, { it.start }, { it.end })).fold(mutableListOf()) { acc, span ->
+        if (acc.isNotEmpty() && acc.last().style == span.style && acc.last().end >= span.start) {
+            val last = acc.removeAt(acc.lastIndex)
+            acc.add(StyleSpan(last.start, maxOf(last.end, span.end), span.style))
+        } else {
+            acc.add(span)
+        }
+        acc
+    }
+}
+
+// Visual transformation for styled text
+private fun styledVisualTransformation(spans: List<StyleSpan>): VisualTransformation {
+    return VisualTransformation { input ->
+        val annotated = buildAnnotatedString {
+            append(input.text)
+            spans.forEach { span ->
+                val style = when (span.style) {
+                    InlineStyle.Bold -> SpanStyle(fontWeight = FontWeight.Bold)
+                    InlineStyle.Italic -> SpanStyle(fontStyle = FontStyle.Italic)
+                    InlineStyle.Underline -> SpanStyle(textDecoration = TextDecoration.Underline)
+                }
+                val safeStart = span.start.coerceIn(0, input.text.length)
+                val safeEnd = span.end.coerceIn(0, input.text.length)
+                if (safeStart < safeEnd) {
+                    addStyle(style, safeStart, safeEnd)
+                }
+            }
+        }
+        TransformedText(annotated, OffsetMapping.Identity)
+    }
+}
+
 @Composable
 private fun ParagraphBlock(
     text: String,
+    spans: List<StyleSpan>,
     editMode: EditMode,
-    onTextChange: (String) -> Unit,
+    selection: TextRange,
+    onTextChange: (String, List<StyleSpan>, TextRange) -> Unit,
     onBackspaceAtStart: (isEmptyNow: Boolean) -> Unit,
     onFocused: () -> Unit
 ) {
-    var value by remember(text) { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+    var value by remember(text, spans, selection) { mutableStateOf(TextFieldValue(text, selection)) }
+
     BasicTextField(
         value = value,
         onValueChange = { newValue ->
             if (editMode != EditMode.TEXT) return@BasicTextField
-
             val oldText = value.text
-            val oldSelection = value.selection
             val newText = newValue.text
             val newSelection = newValue.selection
-
-            val classicBackspace =
-                oldSelection.start == 0 &&
-                    oldSelection.end == 0 &&
-                    newText.length == oldText.length - 1
-            val clearToEmptyAtStart =
-                newText.isEmpty() &&
-                    oldText.isNotEmpty() &&
-                    newSelection.start == 0 && newSelection.end == 0
-            val emptyBackspaceNoOp =
-                oldText.isEmpty() &&
-                    newText.isEmpty() &&
-                    oldSelection.start == 0 && oldSelection.end == 0 &&
-                    newSelection.start == 0 && newSelection.end == 0
-
-            val backspaceAtStart = classicBackspace || clearToEmptyAtStart || emptyBackspaceNoOp
-
-            if (backspaceAtStart) {
-                onBackspaceAtStart(newText.isEmpty())
+            // Shift spans for insert/delete
+            val delta = newText.length - oldText.length
+            val newSpans = if (delta == 0) spans else spans.mapNotNull { span ->
+                if (span.end <= newSelection.start && span.start <= span.end) {
+                    // Before edit
+                    span
+                } else if (span.start >= newSelection.start - delta) {
+                    // After edit
+                    val shift = delta
+                    val s = (span.start + shift).coerceAtLeast(0)
+                    val e = (span.end + shift).coerceAtLeast(s)
+                    if (s < e) span.copy(start = s, end = e) else null
+                } else {
+                    // Overlapping edit: drop
+                    null
+                }
             }
-
             value = newValue
-            if (newText != text) {
-                onTextChange(newText)
+            if (newText != text || newSpans != spans || newSelection != selection) {
+                onTextChange(newText, newSpans, newSelection)
             }
         },
         modifier = Modifier
@@ -734,6 +836,7 @@ private fun ParagraphBlock(
             .onFocusChanged { if (it.isFocused) onFocused() },
         textStyle = TextStyle(fontSize = 16.sp, color = Color.Black),
         keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Default),
+        visualTransformation = styledVisualTransformation(spans),
         decorationBox = { innerTextField ->
             Box {
                 if (value.text.isEmpty()) {
@@ -1044,49 +1147,78 @@ private fun DrawingOverlay(
     modifier: Modifier = Modifier,
     drawingState: DrawingState,
     isInputEnabled: Boolean,
+    isEraserActive: Boolean = false,
     onUpdateDrawingState: ((DrawingState) -> DrawingState) -> Unit
 ) {
     val inputModifier = if (isInputEnabled) {
-        Modifier.pointerInput(Unit) {
-            awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
-
-                // Start a new stroke with the initial down position
-                var currentStroke = Note.Path(
-                    points = listOf(Note.Point(down.position.x, down.position.y))
-                )
-                onUpdateDrawingState { state ->
-                    state.copy(currentStroke = currentStroke)
-                }
-
-                while (true) {
-                    val event = awaitPointerEvent()
-                    val pointer = event.changes.firstOrNull { it.id == down.id }
-                    if (pointer == null || !pointer.pressed) {
-                        break
+        if (isEraserActive) {
+            Modifier.pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var lastPos = down.position
+                    var erased = false
+                    onUpdateDrawingState { state -> state }
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pointer = event.changes.firstOrNull { it.id == down.id }
+                        if (pointer == null || !pointer.pressed) break
+                        val pos = pointer.position
+                        // Erase logic: remove points close to the drag path
+                        onUpdateDrawingState { state ->
+                            val newStrokes = state.strokes.flatMap { stroke ->
+                                val filtered = stroke.points.filterNot { pt ->
+                                    val dx = pt.x - pos.x
+                                    val dy = pt.y - pos.y
+                                    Math.hypot(dx.toDouble(), dy.toDouble()) < 16.0 // 16px threshold (was 32.0)
+                                }
+                                if (filtered.size >= 2) listOf(stroke.copy(points = filtered)) else emptyList()
+                            }
+                            state.copy(strokes = newStrokes, currentStroke = null)
+                        }
+                        lastPos = pos
+                        pointer.consume()
                     }
-                    val pos = pointer.position
-                    // Append new point by creating a new list (Note.Path.points is immutable)
-                    currentStroke = currentStroke.copy(
-                        points = currentStroke.points + Note.Point(pos.x, pos.y)
+                }
+            }
+        } else {
+            Modifier.pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    // Start a new stroke with the initial down position
+                    var currentStroke = Note.Path(
+                        points = listOf(Note.Point(down.position.x, down.position.y))
                     )
                     onUpdateDrawingState { state ->
                         state.copy(currentStroke = currentStroke)
                     }
-                    pointer.consume()
-                }
-
-                val finishedStroke = currentStroke
-                if (finishedStroke.points.size > 1) {
-                    onUpdateDrawingState { state ->
-                        state.copy(
-                            strokes = state.strokes + finishedStroke,
-                            currentStroke = null
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pointer = event.changes.firstOrNull { it.id == down.id }
+                        if (pointer == null || !pointer.pressed) {
+                            break
+                        }
+                        val pos = pointer.position
+                        // Append new point by creating a new list (Note.Path.points is immutable)
+                        currentStroke = currentStroke.copy(
+                            points = currentStroke.points + Note.Point(pos.x, pos.y)
                         )
+                        onUpdateDrawingState { state ->
+                            state.copy(currentStroke = currentStroke)
+                        }
+                        pointer.consume()
                     }
-                } else {
-                    onUpdateDrawingState { state ->
-                        state.copy(currentStroke = null)
+                    val finishedStroke = currentStroke
+                    if (finishedStroke.points.size > 1) {
+                        onUpdateDrawingState { state ->
+                            state.copy(
+                                strokes = state.strokes + finishedStroke,
+                                currentStroke = null
+                            )
+                        }
+                    } else {
+                        onUpdateDrawingState { state ->
+                            state.copy(currentStroke = null)
+                        }
                     }
                 }
             }
@@ -1094,7 +1226,6 @@ private fun DrawingOverlay(
     } else {
         Modifier // no pointer input; overlay is visual-only
     }
-
     Canvas(modifier = modifier.then(inputModifier)) {
         // Draw all persisted strokes
         val strokeWidth = 4.dp.toPx()
@@ -1108,7 +1239,6 @@ private fun DrawingOverlay(
             }
             return p
         }
-
         drawingState.strokes.forEach { stroke ->
             drawPath(
                 path = stroke.toPath(),
@@ -1116,7 +1246,6 @@ private fun DrawingOverlay(
                 style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
             )
         }
-
         drawingState.currentStroke?.let { stroke ->
             drawPath(
                 path = stroke.toPath(),
@@ -1132,7 +1261,12 @@ private fun parseMarkdownToBlocks(markdown: String): List<NoteBlock> {
     val lines = markdown.lines()
     val blocks = mutableListOf<NoteBlock>()
     for (line in lines) {
-        when {
+        if (line.startsWith("P|")) {
+            val parts = line.split("|", limit = 3)
+            val text = parts.getOrNull(1) ?: ""
+            val spans = if (parts.size > 2) jsonToSpanList(parts[2]) else emptyList()
+            blocks.add(NoteBlock.Paragraph(text, spans))
+        } else when {
             line.startsWith("[ ] ") -> blocks.add(NoteBlock.ChecklistItem(text = line.removePrefix("[ ] "), checked = false))
             line.startsWith("[x] ") || line.startsWith("[X] ") ->
                 blocks.add(NoteBlock.ChecklistItem(text = line.substring(4), checked = true))
@@ -1152,10 +1286,46 @@ private fun parseMarkdownToBlocks(markdown: String): List<NoteBlock> {
 private fun blocksToMarkdown(blocks: List<NoteBlock>): String {
     return blocks.joinToString("\n") { block ->
         when (block) {
-            is NoteBlock.Paragraph -> block.text
+            is NoteBlock.Paragraph -> {
+                val spansJson = spanListToJson(block.spans)
+                if (spansJson.isNotEmpty())
+                    "P|${block.text}|$spansJson"
+                else
+                    block.text
+            }
             is NoteBlock.ChecklistItem -> (if (block.checked) "[x] " else "[ ] ") + block.text
             is NoteBlock.BulletItem -> "• " + block.text
             is NoteBlock.NumberedItem -> "${block.index}. " + block.text
         }
+    }
+}
+
+private fun spanListToJson(spans: List<StyleSpan>): String {
+    if (spans.isEmpty()) return ""
+    return JSONArray().apply {
+        spans.forEach { span ->
+            put(JSONObject().apply {
+                put("start", span.start)
+                put("end", span.end)
+                put("style", span.style.name)
+            })
+        }
+    }.toString()
+}
+
+private fun jsonToSpanList(json: String): List<StyleSpan> {
+    if (json.isBlank()) return emptyList()
+    return try {
+        val arr = JSONArray(json)
+        List(arr.length()) { i ->
+            val obj = arr.getJSONObject(i)
+            StyleSpan(
+                start = obj.getInt("start"),
+                end = obj.getInt("end"),
+                style = InlineStyle.valueOf(obj.getString("style"))
+            )
+        }
+    } catch (_: Exception) {
+        emptyList()
     }
 }
