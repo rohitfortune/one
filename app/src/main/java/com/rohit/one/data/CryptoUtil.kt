@@ -14,8 +14,9 @@ object CryptoUtil {
     private const val ANDROID_KEY_STORE = "AndroidKeyStore"
     private const val KEY_ALIAS = "com.rohit.one.master_key"
     private const val AES_MODE = "AES/GCM/NoPadding"
-    private const val IV_SIZE = 12 // 96 bits recommended for GCM
-    private const val TAG_LENGTH = 128
+    // GCM authentication tag length in bits and bytes (128 bits == 16 bytes)
+    private const val TAG_LENGTH_BITS = 128
+    private const val TAG_LENGTH_BYTES = TAG_LENGTH_BITS / 8
 
     private fun getOrCreateSecretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
@@ -55,21 +56,22 @@ object CryptoUtil {
             val decoded = Base64.decode(encrypted, Base64.NO_WRAP)
             val byteBuffer = ByteBuffer.wrap(decoded)
             val ivLength = byteBuffer.int
-            if (ivLength < 12 || ivLength > 16) return null
+            // IV length should typically be 12 for GCM, but accept common lengths in range
+            if (ivLength !in 12..TAG_LENGTH_BYTES) return null
             val iv = ByteArray(ivLength)
             byteBuffer.get(iv)
             val cipherBytes = ByteArray(byteBuffer.remaining())
             byteBuffer.get(cipherBytes)
             val cipher = Cipher.getInstance(AES_MODE)
-            val spec = GCMParameterSpec(TAG_LENGTH, iv)
+            // GCMParameterSpec expects tag length in bits
+            val spec = GCMParameterSpec(TAG_LENGTH_BITS, iv)
             val secretKey = getOrCreateSecretKey()
             cipher.init(Cipher.DECRYPT_MODE, secretKey, spec)
             val plain = cipher.doFinal(cipherBytes)
             return String(plain, Charsets.UTF_8)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // decryption failed
             return null
         }
     }
 }
-

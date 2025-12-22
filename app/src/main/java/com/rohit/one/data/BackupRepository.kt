@@ -1,19 +1,25 @@
+@file:Suppress("UNUSED_PARAMETER")
 package com.rohit.one.data
 
 import android.content.Context
+import android.util.Log
 import com.squareup.moshi.Moshi
+import com.squareup.moshi.JsonAdapter
+import com.squareup.moshi.Types
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 
-class BackupRepository(private val context: Context) {
+class BackupRepository(@Suppress("unused") private val context: Context) {
 
     private val client = OkHttpClient()
-    private val moshi = Moshi.Builder().build()
+    // Use KotlinJsonAdapterFactory so Moshi can use generated adapters or fallback to reflection
+    private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
 
     suspend fun createEncryptedBackup(jsonPayload: String): String = withContext(Dispatchers.IO) {
         CryptoUtil.encrypt(jsonPayload)
@@ -36,28 +42,92 @@ class BackupRepository(private val context: Context) {
         val url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id"
         val metadataJson = "{\"name\": \"one_backup.json.enc\", \"parents\": [\"appDataFolder\"]}"
 
-        val metadataBody = RequestBody.create("application/json; charset=utf-8".toMediaType(), metadataJson)
-        val fileBody = RequestBody.create("application/octet-stream".toMediaType(), encryptedPayload.toByteArray(Charsets.UTF_8))
+        val metadataBody = metadataJson.toRequestBody("application/json; charset=utf-8".toMediaType())
+        val fileBody = encryptedPayload.toByteArray(Charsets.UTF_8).toRequestBody("application/octet-stream".toMediaType())
 
-        val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
-            .addFormDataPart("metadata", null, metadataBody)
-            .addFormDataPart("file", "one_backup.json.enc", fileBody)
-            .build()
+        // Build multipart/related manually to ensure the Drive API receives the exact expected format
+        try {
+            val boundary = "----OneBoundary${System.currentTimeMillis()}"
+            val newline = "\r\n"
+            val metaPartHeader = "--$boundary$newline" +
+                    "Content-Type: application/json; charset=UTF-8" + newline + newline
+            val filePartHeader = "--$boundary$newline" +
+                    "Content-Type: application/octet-stream" + newline + newline
 
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("Authorization", "Bearer $accessToken")
-            .post(multipart)
-            .build()
+            val endBoundary = "--$boundary--$newline"
 
-        client.newCall(request).execute().use { resp ->
-            return@withContext resp.isSuccessful
-        }
+            val baos = java.io.ByteArrayOutputStream()
+            baos.write(metaPartHeader.toByteArray(Charsets.UTF_8))
+            baos.write(metadataJson.toByteArray(Charsets.UTF_8))
+            baos.write(newline.toByteArray(Charsets.UTF_8))
+            baos.write(filePartHeader.toByteArray(Charsets.UTF_8))
+            // write binary payload
+            baos.write(encryptedPayload.toByteArray(Charsets.UTF_8))
+            // ensure CRLF before the closing boundary
+            baos.write(newline.toByteArray(Charsets.UTF_8))
+            baos.write(endBoundary.toByteArray(Charsets.UTF_8))
+
+            val multipartContentType = "multipart/related; boundary=$boundary".toMediaType()
+            val bodyBytes = baos.toByteArray()
+            try {
+                val previewLen = kotlin.math.min(bodyBytes.size, 512)
+                val preview = bodyBytes.copyOfRange(0, previewLen)
+                val hexPreview = preview.joinToString(separator = " ") { String.format("%02x", it) }
+                Log.d("BackupRepository", "Prepared multipart body: contentType=$multipartContentType length=${bodyBytes.size} preview(hex)=$hexPreview")
+            } catch (e: Exception) {
+                Log.w("BackupRepository", "Failed to generate multipart preview: ${e.message}")
+            }
+            val requestBody = baos.toByteArray().toRequestBody(multipartContentType)
+
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("Authorization", "Bearer $accessToken")
+                .post(requestBody)
+                .build()
+
+            Log.d("BackupRepository", "Uploading request with Content-Type=${request.header("Content-Type")}, contentLength=${requestBody.contentLength()}")
+
+            client.newCall(request).execute().use { resp ->
+                val bodyStr = try { resp.body?.string() } catch (e: Exception) { "<error reading body: ${e.message}>" }
+                if (!resp.isSuccessful) {
+                    Log.w("BackupRepository", "Upload failed: code=${resp.code} message=${resp.message} body=$bodyStr")
+                    throw java.io.IOException("Drive upload failed: code=${resp.code} message=${resp.message} body=$bodyStr")
+                } else {
+                    Log.i("BackupRepository", "Upload succeeded: code=${resp.code} body=$bodyStr")
+                    return@withContext true
+                }
+            }
+         } catch (e: Exception) {
+             Log.e("BackupRepository", "Multipart manual builder failed: ${e.message}", e)
+             // Fallback to simple form-data (previous behavior) as last resort
+             val multipartFallback = MultipartBody.Builder().setType(MultipartBody.FORM)
+                 .addFormDataPart("metadata", null, metadataBody)
+                 .addFormDataPart("file", "one_backup.json.enc", fileBody)
+             val request = Request.Builder()
+                 .url(url)
+                 .addHeader("Authorization", "Bearer $accessToken")
+                 .post(multipartFallback.build())
+                 .build()
+
+             client.newCall(request).execute().use { resp ->
+                val bodyStr = resp.body?.string()
+                Log.d("BackupRepository", "Upload fallback response: code=${resp.code} body=$bodyStr")
+                if (!resp.isSuccessful) {
+                    throw java.io.IOException("Drive upload fallback failed: code=${resp.code} body=$bodyStr")
+                }
+                return@withContext true
+             }
+         }
     }
 
     // Download the latest backup file from appDataFolder. Caller must provide an access token.
     suspend fun downloadLatestBackupFromDrive(accessToken: String): String? = withContext(Dispatchers.IO) {
-        val listUrl = "https://www.googleapis.com/drive/v3/files?q=name=%27one_backup.json.enc%27+and+parents+in+appDataFolder&spaces=appDataFolder&fields=files(id,name,createdTime)&orderBy=createdTime desc&pageSize=1"
+        // Correct query: name='one_backup.json.enc' and 'appDataFolder' in parents
+        val query = "name='one_backup.json.enc' and 'appDataFolder' in parents"
+        val listUrl = "https://www.googleapis.com/drive/v3/files?q=${java.net.URLEncoder.encode(query, "UTF-8")}&spaces=appDataFolder&fields=files(id,name,createdTime)&orderBy=createdTime%20desc&pageSize=1"
+
+        Log.d("BackupRepository", "Listing backups with URL: $listUrl")
+
         val listReq = Request.Builder()
             .url(listUrl)
             .addHeader("Authorization", "Bearer $accessToken")
@@ -65,14 +135,37 @@ class BackupRepository(private val context: Context) {
             .build()
 
         client.newCall(listReq).execute().use { listResp ->
-            if (!listResp.isSuccessful) return@withContext null
-            val body = listResp.body?.string() ?: return@withContext null
-            val jsonAdapter = moshi.adapter(Map::class.java)
-            val parsed = jsonAdapter.fromJson(body) as? Map<*, *> ?: return@withContext null
-            val files = parsed["files"] as? List<*> ?: return@withContext null
-            if (files.isEmpty()) return@withContext null
-            val first = files[0] as? Map<*, *> ?: return@withContext null
-            val id = first["id"] as? String ?: return@withContext null
+            if (!listResp.isSuccessful) {
+                Log.w("BackupRepository", "List request failed: ${listResp.code} ${listResp.message}")
+                return@withContext null
+            }
+            val body = listResp.body?.string() ?: run {
+                Log.w("BackupRepository", "List response body empty")
+                return@withContext null
+            }
+            Log.d("BackupRepository", "List response: $body")
+            val mapType = Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
+            val jsonAdapter: JsonAdapter<Map<String, Any>> = moshi.adapter(mapType)
+            val parsed = jsonAdapter.fromJson(body) ?: run {
+                Log.w("BackupRepository", "Failed to parse list response JSON")
+                return@withContext null
+            }
+            val files = parsed["files"] as? List<*> ?: run {
+                Log.d("BackupRepository", "No 'files' key in response")
+                return@withContext null
+            }
+            if (files.isEmpty()) {
+                Log.d("BackupRepository", "No backup files found in appDataFolder")
+                return@withContext null
+            }
+            val first = files[0] as? Map<*, *> ?: run {
+                Log.w("BackupRepository", "Unexpected file entry structure")
+                return@withContext null
+            }
+            val id = first["id"] as? String ?: run {
+                Log.w("BackupRepository", "No id found for file entry")
+                return@withContext null
+            }
 
             val downloadUrl = "https://www.googleapis.com/drive/v3/files/$id?alt=media"
             val dlReq = Request.Builder()
@@ -82,9 +175,203 @@ class BackupRepository(private val context: Context) {
                 .build()
 
             client.newCall(dlReq).execute().use { dlResp ->
-                if (!dlResp.isSuccessful) return@withContext null
-                return@withContext dlResp.body?.string()
+                if (!dlResp.isSuccessful) {
+                    Log.w("BackupRepository", "Download failed: ${dlResp.code} ${dlResp.message}")
+                    return@withContext null
+                }
+                val content = dlResp.body?.string()
+                Log.d("BackupRepository", "Downloaded backup size=${content?.length ?: 0}")
+                return@withContext content
             }
+        }
+    }
+
+    // High-level helpers to be called from UI. These functions encapsulate building payloads,
+    // encrypting, uploading and restoring. They accept callbacks to fetch raw secrets (passwords/cards)
+    // because those require biometric-protected retrieval from the ViewModel layer.
+
+    suspend fun performDeviceBackup(
+        notes: List<Note>,
+        passwords: List<Password>,
+        cards: List<CreditCard>,
+        fetchRawPassword: suspend (uuid: String) -> String?,
+        fetchFullCardNumber: suspend (uuid: String) -> String?,
+        accessTokenProvider: suspend () -> String?
+    ): Boolean = withContext(Dispatchers.IO) {
+         val pwExports = passwords.map { pw ->
+             val raw = fetchRawPassword(pw.uuid)
+             PasswordExport(pw.uuid, pw.title, pw.username, raw, pw.createdAt)
+         }
+         val cardExports = cards.map { c ->
+             val full = fetchFullCardNumber(c.uuid)
+             CardExport(c.uuid, c.cardholderName, c.last4, full, c.brand, c.expiry, c.securityCode, c.createdAt)
+         }
+         val noteExports = notes.map { n -> NoteExport(n.title, n.content, n.attachments) }
+         val payload = BackupPayload(noteExports, pwExports, cardExports)
+         val json = moshi.adapter(BackupPayload::class.java).toJson(payload)
+         val enc = CryptoUtil.encrypt(json)
+        // Try upload, and on auth failure attempt one refresh+retry using the provider
+        val firstToken = try { accessTokenProvider() } catch (e: Exception) {
+            Log.w("BackupRepository", "accessTokenProvider threw: ${e.message}")
+            null
+        }
+        if (firstToken.isNullOrBlank()) {
+            Log.w("BackupRepository", "No access token available for backup")
+            return@withContext false
+        } else {
+            val preview = try { firstToken.take(6) + "..." + firstToken.takeLast(6) } catch (_: Exception) { "<hidden>" }
+            Log.d("BackupRepository", "Using token for upload (preview)=$preview length=${firstToken.length}")
+        }
+        try {
+            return@withContext uploadBackupToDrive(enc, firstToken)
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            Log.w("BackupRepository", "Upload attempt failed: $msg")
+            if (msg.contains("code=401") || msg.contains("UNAUTHENTICATED") || msg.contains("Invalid Credentials") || msg.contains("401")) {
+                Log.w("BackupRepository", "Auth failure detected during upload; attempting one refresh+retry: ${e.message}")
+                val refreshed = try { accessTokenProvider() } catch (ex: Exception) {
+                    Log.w("BackupRepository", "accessTokenProvider refresh threw: ${ex.message}")
+                    null
+                }
+                if (refreshed.isNullOrBlank()) {
+                    Log.w("BackupRepository", "Token refresh failed or returned null")
+                    return@withContext false
+                }
+                try {
+                    val preview = try { refreshed.take(6) + "..." + refreshed.takeLast(6) } catch (_: Exception) { "<hidden>" }
+                    Log.d("BackupRepository", "Retrying upload with refreshed token (preview)=$preview length=${refreshed.length}")
+                    return@withContext uploadBackupToDrive(enc, refreshed)
+                } catch (e2: Exception) {
+                    Log.e("BackupRepository", "Retry after refresh failed: ${e2.message}")
+                    return@withContext false
+                }
+            }
+            throw e
+        }
+     }
+
+    suspend fun performPassphraseBackup(
+        notes: List<Note>,
+        passwords: List<Password>,
+        cards: List<CreditCard>,
+        fetchRawPassword: suspend (uuid: String) -> String?,
+        fetchFullCardNumber: suspend (uuid: String) -> String?,
+        passphrase: CharArray,
+        accessTokenProvider: suspend () -> String?
+    ): Boolean = withContext(Dispatchers.IO) {
+         val pwExports = passwords.map { pw ->
+             val raw = fetchRawPassword(pw.uuid)
+             PasswordExport(pw.uuid, pw.title, pw.username, raw, pw.createdAt)
+         }
+         val cardExports = cards.map { c ->
+             val full = fetchFullCardNumber(c.uuid)
+             CardExport(c.uuid, c.cardholderName, c.last4, full, c.brand, c.expiry, c.securityCode, c.createdAt)
+         }
+         val noteExports = notes.map { n -> NoteExport(n.title, n.content, n.attachments) }
+         val payload = BackupPayload(noteExports, pwExports, cardExports)
+         val json = moshi.adapter(BackupPayload::class.java).toJson(payload)
+         val enc = BackupCrypto.encryptWithPassphrase(json, passphrase)
+        val firstToken = try { accessTokenProvider() } catch (_: Exception) { null }
+        if (firstToken.isNullOrBlank()) {
+            Log.w("BackupRepository", "No access token available for passphrase backup")
+            return@withContext false
+        }
+        try {
+            return@withContext uploadBackupToDrive(enc, firstToken)
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg.contains("code=401") || msg.contains("UNAUTHENTICATED") || msg.contains("Invalid Credentials") || msg.contains("401")) {
+                Log.w("BackupRepository", "Auth failure detected during passphrase upload; attempting one refresh+retry: ${e.message}")
+                val refreshed = try { accessTokenProvider() } catch (_: Exception) { null }
+                if (refreshed.isNullOrBlank()) {
+                    Log.w("BackupRepository", "Token refresh failed or returned null")
+                    return@withContext false
+                }
+                try {
+                    return@withContext uploadBackupToDrive(enc, refreshed)
+                } catch (e2: Exception) {
+                    Log.e("BackupRepository", "Retry after refresh failed: ${e2.message}")
+                    return@withContext false
+                }
+            }
+            throw e
+        }
+     }
+
+    suspend fun performDeviceRestore(
+        accessTokenProvider: suspend () -> String?,
+    ): String? = withContext(Dispatchers.IO) {
+        val firstToken = try { accessTokenProvider() } catch (_: Exception) { null }
+        if (firstToken.isNullOrBlank()) return@withContext null
+        try {
+            val enc = downloadLatestBackupFromDrive(firstToken) ?: return@withContext null
+            return@withContext decryptBackup(enc)
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg.contains("code=401") || msg.contains("UNAUTHENTICATED") || msg.contains("Invalid Credentials") || msg.contains("401")) {
+                val refreshed = try { accessTokenProvider() } catch (_: Exception) { null }
+                if (refreshed.isNullOrBlank()) return@withContext null
+                val enc2 = try { downloadLatestBackupFromDrive(refreshed) } catch (_: Exception) { null } ?: return@withContext null
+                return@withContext decryptBackup(enc2)
+            }
+            throw e
+        }
+    }
+
+    suspend fun performPassphraseRestore(
+        accessTokenProvider: suspend () -> String?,
+        passphrase: CharArray
+    ): String? = withContext(Dispatchers.IO) {
+        val firstToken = try { accessTokenProvider() } catch (_: Exception) { null }
+        if (firstToken.isNullOrBlank()) return@withContext null
+        try {
+            val enc = downloadLatestBackupFromDrive(firstToken) ?: return@withContext null
+            return@withContext decryptPassphraseBackup(enc, passphrase)
+        } catch (e: Exception) {
+            val msg = e.message ?: ""
+            if (msg.contains("code=401") || msg.contains("UNAUTHENTICATED") || msg.contains("Invalid Credentials") || msg.contains("401")) {
+                val refreshed = try { accessTokenProvider() } catch (_: Exception) { null }
+                if (refreshed.isNullOrBlank()) return@withContext null
+                val enc2 = try { downloadLatestBackupFromDrive(refreshed) } catch (_: Exception) { null } ?: return@withContext null
+                return@withContext decryptPassphraseBackup(enc2, passphrase)
+            }
+            throw e
+        }
+    }
+
+    // Return the createdTime of the latest backup file in appDataFolder (ISO 8601 string), or null if none
+    suspend fun getLatestBackupCreatedTime(accessTokenProvider: suspend () -> String?): String? = withContext(Dispatchers.IO) {
+        val token = try { accessTokenProvider() } catch (_: Exception) { null }
+        if (token.isNullOrBlank()) return@withContext null
+
+        try {
+            val query = "name='one_backup.json.enc' and 'appDataFolder' in parents"
+            val listUrl = "https://www.googleapis.com/drive/v3/files?q=${java.net.URLEncoder.encode(query, "UTF-8")}&spaces=appDataFolder&fields=files(id,name,createdTime)&orderBy=createdTime%20desc&pageSize=1"
+
+            val listReq = Request.Builder()
+                .url(listUrl)
+                .addHeader("Authorization", "Bearer $token")
+                .get()
+                .build()
+
+            client.newCall(listReq).execute().use { listResp ->
+                if (!listResp.isSuccessful) {
+                    Log.w("BackupRepository", "getLatestBackupCreatedTime list request failed: ${listResp.code} ${listResp.message}")
+                    return@withContext null
+                }
+                val body = listResp.body?.string() ?: return@withContext null
+                val mapType = Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
+                val jsonAdapter: JsonAdapter<Map<String, Any>> = moshi.adapter(mapType)
+                val parsed = jsonAdapter.fromJson(body) ?: return@withContext null
+                val files = parsed["files"] as? List<*> ?: return@withContext null
+                if (files.isEmpty()) return@withContext null
+                val first = files[0] as? Map<*, *> ?: return@withContext null
+                val created = first["createdTime"] as? String
+                return@withContext created
+            }
+        } catch (e: Exception) {
+            Log.w("BackupRepository", "getLatestBackupCreatedTime failed: ${e.message}")
+            return@withContext null
         }
     }
 }

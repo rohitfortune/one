@@ -1,5 +1,6 @@
 [versions]
-agp = "8.13.1"
+agp = "8.13.2"
+credentialsV150 = "1.5.0"
 kotlin = "1.9.23"
 composeCompiler = "1.5.12"
 coreKtx = "1.10.1"
@@ -13,6 +14,13 @@ navigationCompose = "2.7.7"
 room = "2.6.1"
 ksp = "1.9.23-1.0.20"
 material3AdaptiveNavigationSuite = "1.4.0"
+playServicesAuth = "21.4.0"
+okhttp = "4.11.0"
+moshi = "1.15.2"
+moshiKotlin = "1.15.2"
+lifecycleRuntimeCompose = "2.10.0"
+securityCrypto = "1.1.0"
+biometric = "1.1.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -35,6 +43,14 @@ androidx-room-runtime = { group = "androidx.room", name = "room-runtime", versio
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+play-services-auth = { group = "com.google.android.gms", name = "play-services-auth", version.ref = "playServicesAuth" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+moshi = { group = "com.squareup.moshi", name = "moshi", version.ref = "moshi" }
+moshi-kotlin = { group = "com.squareup.moshi", name = "moshi-kotlin", version.ref = "moshiKotlin" }
+androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
+androidxCredentialsV150 = { group = "androidx.credentials", name = "credentials", version.ref = "credentialsV150" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycleRuntimeCompose" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

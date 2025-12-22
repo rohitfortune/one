@@ -1,3 +1,4 @@
+@file:Suppress("unused")
 package com.rohit.one.data
 
 import androidx.room.Dao
@@ -14,12 +15,16 @@ interface NoteDao {
     @Query("SELECT * FROM note")
     fun getAllNotes(): Flow<List<Note>>
 
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertNote(note: Note)
+    suspend fun insertNote(note: Note): Long
 
     @Update
     suspend fun updateNote(note: Note)
 
     @Delete
     suspend fun deleteNote(note: Note)
+
+    @Query("SELECT * FROM note WHERE title = :title AND content = :content LIMIT 1")
+    suspend fun findByTitleAndContent(title: String, content: String): Note?
 }

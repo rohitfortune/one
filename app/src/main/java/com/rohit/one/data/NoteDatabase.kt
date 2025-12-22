@@ -4,8 +4,10 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
 
-@Database(entities = [Note::class, Password::class, CreditCard::class], version = 3, exportSchema = false)
+@Database(entities = [Note::class, Password::class, CreditCard::class], version = 8, exportSchema = false)
+@TypeConverters(NoteTypeConverters::class, PathConverter::class)
 abstract class NoteDatabase : RoomDatabase() {
 
     abstract fun noteDao(): NoteDao

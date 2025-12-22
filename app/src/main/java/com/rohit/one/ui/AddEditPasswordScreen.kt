@@ -14,14 +14,28 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalContext
 import com.rohit.one.data.Password
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -33,9 +47,9 @@ fun AddEditPasswordScreen(
     onSave: (String, String, String) -> Unit,
     onDelete: (Password) -> Unit,
     onNavigateUp: () -> Unit,
+    modifier: Modifier = Modifier,
     // requestRawPassword is async: caller performs any auth and invokes the onResult callback with the secret
-    requestRawPassword: (((String?) -> Unit) -> Unit)? = null,
-    modifier: Modifier = Modifier
+    requestRawPassword: (((String?) -> Unit) -> Unit)? = null
 ) {
     var title by remember { mutableStateOf(password?.title ?: "") }
     var username by remember { mutableStateOf(password?.username ?: "") }
@@ -85,7 +99,7 @@ fun AddEditPasswordScreen(
             TextField(
                 value = title,
                 onValueChange = { title = it },
-                label = { Text("Title") },
+                label = { Text("Domain") },
                 modifier = Modifier.padding(bottom = 8.dp)
             )
             TextField(

@@ -1,21 +1,46 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.ksp)
+    id("org.jetbrains.kotlin.kapt")
 }
 
 android {
     namespace = "com.rohit.one"
-    compileSdk = 35 
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.rohit.one"
         minSdk = 26 
-        targetSdk = 35 
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // OAuth build config fields (set via local.properties or CI if needed).
+        // Read from local.properties if present; otherwise default to empty strings.
+        //
+        // NOTE: These values are optional for the current GoogleSignIn + GoogleAuthUtil
+        // on-device flow. The app can obtain Drive appData access using an Android OAuth
+        // client registered with your package name + SHA-1 in Google Cloud Console.
+        //
+        // This local.properties reader is kept as a convenience so you can supply a
+        // web client ID or AppAuth redirect URI (for PKCE or server flows) at build time
+        // without editing source. Leaving these empty is safe and does not affect the
+        // standard GoogleSignIn behavior.
+        val localPropsFile = rootProject.file("local.properties")
+        val localProps = Properties()
+        if (localPropsFile.exists()) {
+            localProps.load(localPropsFile.inputStream())
+        }
+        val oauthClientId: String = localProps.getProperty("OAUTH_CLIENT_ID", "")
+        val oauthRedirectUri: String = localProps.getProperty("OAUTH_REDIRECT_URI", "")
+
+        buildConfigField("String", "OAUTH_CLIENT_ID", "\"${oauthClientId}\"")
+        buildConfigField("String", "OAUTH_REDIRECT_URI", "\"${oauthRedirectUri}\"")
     }
 
     buildTypes {
@@ -36,6 +61,8 @@ android {
     }
     buildFeatures {
         compose = true
+        // Enable BuildConfig generation so buildConfigField values are available at runtime
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
@@ -53,25 +80,41 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material3.adaptive.navigation.suite)
     implementation(libs.androidx.navigation.compose)
+    // Compose Foundation (provides HorizontalPager via androidx.compose.foundation.pager)
+    implementation("androidx.compose.foundation:foundation")
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.compose.material.icons.extended)
 
     // Jetpack Security for encrypted storage (MasterKey/Crypto) used by Passwords feature
-    implementation("androidx.security:security-crypto:1.1.0")
+    implementation(libs.androidx.security.crypto)
 
     // Biometric authentication for revealing passwords securely
-    implementation("androidx.biometric:biometric:1.1.0")
+    implementation(libs.androidx.biometric)
 
     // Google Sign-In (used to obtain OAuth tokens to talk to Drive appData)
-    implementation("com.google.android.gms:play-services-auth:20.7.0")
+    implementation(libs.play.services.auth)
+
+    // AndroidX Credential Manager (v1.5.0) via version catalog alias
+    implementation(libs.androidxCredentialsV150)
 
     // HTTP client for Drive REST calls
-    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+    implementation(libs.okhttp)
     // JSON parsing
-    implementation("com.squareup.moshi:moshi:1.15.0")
-    implementation("com.squareup.moshi:moshi-kotlin:1.15.0")
+    implementation(libs.moshi)
+    implementation(libs.moshi.kotlin)
+    // Moshi codegen for @JsonClass(generateAdapter = true)
+    kapt("com.squareup.moshi:moshi-kotlin-codegen:1.15.2")
+
+    // Coroutines (Android) for MainScope().launch usage in MainActivity
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // Add lifecycle runtime compose to use LocalLifecycleOwner from androidx.lifecycle.compose
+    implementation(libs.androidx.lifecycle.runtime.compose)
+
+    // Removed AppAuth fallback - migration to Google Identity (GoogleSignIn/AuthorizationClient)
+    // If you need PKCE fallback later, re-add AppAuth coordinates here.
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

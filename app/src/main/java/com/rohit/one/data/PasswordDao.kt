@@ -1,3 +1,4 @@
+@file:Suppress("unused")
 package com.rohit.one.data
 
 import androidx.room.Dao
@@ -22,5 +23,7 @@ interface PasswordDao {
 
     @Delete
     suspend fun deletePassword(password: Password)
-}
 
+    @Query("SELECT * FROM password WHERE uuid = :uuid LIMIT 1")
+    suspend fun getByUuid(uuid: String): Password?
+}

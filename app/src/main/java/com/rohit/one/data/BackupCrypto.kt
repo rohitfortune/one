@@ -11,7 +11,6 @@ import javax.crypto.spec.SecretKeySpec
 
 object BackupCrypto {
     private const val AES_MODE = "AES/GCM/NoPadding"
-    private const val IV_SIZE = 12
     private const val TAG_LENGTH = 128
     private const val SALT_SIZE = 16
     private const val ITERATIONS = 100_000
@@ -54,7 +53,7 @@ object BackupCrypto {
             cipher.init(Cipher.DECRYPT_MODE, key, spec)
             val plain = cipher.doFinal(cipherBytes)
             return String(plain, Charsets.UTF_8)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return null
         }
     }

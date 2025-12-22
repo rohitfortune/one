@@ -19,3 +19,6 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Keep Moshi generated JsonAdapter classes for data models in com.rohit.one.data
+-keep class com.rohit.one.data.*JsonAdapter { *; }

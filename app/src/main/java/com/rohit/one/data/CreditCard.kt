@@ -11,6 +11,7 @@ data class CreditCard(
     val cardholderName: String,
     val last4: String,
     val brand: String? = null,
+    val expiry: String? = null,
+    val securityCode: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
-

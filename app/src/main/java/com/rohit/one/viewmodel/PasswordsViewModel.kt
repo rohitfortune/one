@@ -39,8 +39,8 @@ class VaultsViewModel(
     fun getRawPassword(uuid: String): String? = passwordRepository.getRawPassword(uuid)
 
     // Cards
-    fun addCard(cardholderName: String, fullNumber: String, brand: String?) {
-        viewModelScope.launch { cardRepository.addCard(cardholderName, fullNumber, brand) }
+    fun addCard(cardholderName: String, fullNumber: String, brand: String?, expiry: String?, securityCode: String?) {
+        viewModelScope.launch { cardRepository.addCard(cardholderName, fullNumber, brand, expiry, securityCode) }
     }
 
     fun updateCard(card: CreditCard, fullNumber: String?) {
@@ -52,6 +52,25 @@ class VaultsViewModel(
     }
 
     fun getFullNumber(uuid: String): String? = cardRepository.getFullNumber(uuid)
+
+    // New restore/upsert helpers
+    fun restorePasswordFromBackup(uuid: String, title: String, username: String, rawPassword: String?, createdAt: Long) {
+        viewModelScope.launch { passwordRepository.upsertPasswordFromBackup(uuid, title, username, rawPassword, createdAt) }
+    }
+
+    fun restoreCardFromBackup(
+        uuid: String,
+        cardholderName: String,
+        fullNumber: String?,
+        brand: String?,
+        expiry: String?,
+        securityCode: String?,
+        createdAt: Long
+    ) {
+        viewModelScope.launch {
+            cardRepository.upsertCardFromBackup(uuid, cardholderName, fullNumber, brand, expiry, securityCode, createdAt)
+        }
+    }
 
     companion object {
         fun provideFactory(passwordRepo: PasswordRepository, cardRepo: CreditCardRepository): ViewModelProvider.Factory {

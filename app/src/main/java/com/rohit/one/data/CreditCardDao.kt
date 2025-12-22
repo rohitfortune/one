@@ -1,3 +1,4 @@
+@file:Suppress("unused")
 package com.rohit.one.data
 
 import androidx.room.Dao
@@ -22,5 +23,7 @@ interface CreditCardDao {
 
     @Delete
     suspend fun deleteCard(card: CreditCard)
-}
 
+    @Query("SELECT * FROM creditcard WHERE uuid = :uuid LIMIT 1")
+    suspend fun getByUuid(uuid: String): CreditCard?
+}

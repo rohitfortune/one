@@ -16,28 +16,23 @@ class NotesViewModel(private val noteRepository: NoteRepository) : ViewModel() {
     val notes: StateFlow<List<Note>> = noteRepository.getAllNotes().map { it.toList() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun addNote(note: Note) {
-        viewModelScope.launch { noteRepository.insertNote(note) }
+    fun addNote(note: Note) { viewModelScope.launch { noteRepository.insertNote(note) } }
+
+    fun updateNote(note: Note) { viewModelScope.launch { noteRepository.updateNote(note) } }
+
+    fun deleteNote(note: Note) { viewModelScope.launch { noteRepository.deleteNote(note) } }
+
+    fun restoreNoteFromBackup(title: String, content: String, attachments: List<Note.Attachment> = emptyList()) {
+        viewModelScope.launch { noteRepository.upsertNoteFromBackup(title, content, attachments) }
     }
 
-    fun updateNote(note: Note) {
-        viewModelScope.launch { noteRepository.updateNote(note) }
-    }
-
-    fun deleteNote(note: Note) {
-        viewModelScope.launch { noteRepository.deleteNote(note) }
-    }
+    suspend fun findByTitleAndContent(title: String, content: String): Note? = noteRepository.findByTitleAndContent(title, content)
 
     companion object {
-        fun provideFactory(repository: NoteRepository): ViewModelProvider.Factory {
-            return object : ViewModelProvider.Factory {
+        fun provideFactory(repository: NoteRepository): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    if (modelClass.isAssignableFrom(NotesViewModel::class.java)) {
-                        return NotesViewModel(repository) as T
-                    }
-                    throw IllegalArgumentException("Unknown ViewModel class")
-                }
+                return NotesViewModel(repository) as T
             }
         }
     }
