@@ -4,7 +4,9 @@ import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -65,6 +67,12 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.core.net.toUri
+import androidx.compose.material3.CircularProgressIndicator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -74,7 +82,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.core.content.FileProvider
-import androidx.core.content.ContextCompat
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
@@ -253,54 +260,59 @@ fun NoteScreen(
     }
 
     // Activity Result launcher for picking multiple documents
+    val coroutineScope = rememberCoroutineScope()
+    var copyingInProgress by remember { mutableStateOf(false) }
+
     val pickLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris: List<android.net.Uri> ->
+    ) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         val contentResolver = context.contentResolver
-        val newAttachments = mutableListOf<Note.Attachment>()
         // Use the attachmentsDir created above in the outer scope
         if (!attachmentsDir.exists()) attachmentsDir.mkdirs()
 
-        for (uri in uris) {
+        copyingInProgress = true
+        coroutineScope.launch {
+            val newAttachments = mutableListOf<Note.Attachment>()
             try {
-                // Try to query display name
-                var displayName: String? = null
-                contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                    if (cursor.moveToFirst()) {
-                        displayName = cursor.getString(0)
-                      }
-                }
+                withContext(Dispatchers.IO) {
+                    for (uri in uris) {
+                        try {
+                            // Try to query display name
+                            var displayName: String? = null
+                            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                                if (cursor.moveToFirst()) displayName = cursor.getString(0)
+                            }
 
-                val mime = contentResolver.getType(uri)
+                            val mime = contentResolver.getType(uri)
 
-                // Copy the content to internal storage
-                val safeName = (displayName ?: uri.lastPathSegment ?: "attachment").replace(Regex("[^A-Za-z0-9._-]"), "_")
-                val timestamp = System.currentTimeMillis()
-                val targetFile = java.io.File(attachmentsDir, "${timestamp}_$safeName")
+                            // Copy the content to internal storage
+                            val safeName = (displayName ?: uri.lastPathSegment ?: "attachment").replace(Regex("[^A-Za-z0-9._-]"), "_")
+                            val timestamp = System.currentTimeMillis()
+                            val targetFile = java.io.File(attachmentsDir, "${timestamp}_$safeName")
 
-                try {
-                    contentResolver.openInputStream(uri)?.use { input ->
-                        targetFile.outputStream().use { out ->
-                            input.copyTo(out)
+                            contentResolver.openInputStream(uri)?.use { input ->
+                                targetFile.outputStream().use { out ->
+                                    input.copyTo(out)
+                                }
+                            } ?: throw java.io.IOException("Unable to open input stream for $uri")
+
+                            val attach = Note.Attachment(uri = targetFile.absolutePath, displayName = displayName, mimeType = mime)
+                            // Avoid duplicates by internal path
+                            if (attachments.none { it.uri == attach.uri } && newAttachments.none { it.uri == attach.uri }) {
+                                newAttachments.add(attach)
+                            }
+                        } catch (e: Exception) {
+                            Log.w("NoteScreen", "Failed to add attachment for $uri: ${e.message}")
                         }
-                    } ?: throw java.io.IOException("Unable to open input stream for $uri")
-                } catch (copyEx: Exception) {
-                    Log.w("NoteScreen", "Failed to copy attachment $uri -> ${targetFile.absolutePath}: ${copyEx.message}")
-                    // If copy failed, don't add this attachment
-                    continue
+                    }
                 }
-
-                val attach = Note.Attachment(uri = targetFile.absolutePath, displayName = displayName, mimeType = mime)
-                // Avoid duplicates by internal path
-                if (attachments.none { it.uri == attach.uri } && newAttachments.none { it.uri == attach.uri }) {
-                    newAttachments.add(attach)
-                }
-            } catch (e: Exception) {
-                Log.w("NoteScreen", "Failed to add attachment for $uri: ${e.message}")
+            } finally {
+                // Merge new attachments on main thread
+                if (newAttachments.isNotEmpty()) attachments = attachments + newAttachments
+                copyingInProgress = false
             }
         }
-        if (newAttachments.isNotEmpty()) attachments = attachments + newAttachments
     }
 
     var focusedBlockIndex by remember { mutableIntStateOf(-1) }
@@ -901,6 +913,22 @@ fun NoteScreen(
             )
         }
     }
+
+    // Show a global copying progress dialog when copyingInProgress is true
+    if (copyingInProgress) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Copying…") },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.size(8.dp))
+                    Text("Copying files to note...")
+                }
+            },
+            confirmButton = {}
+        )
+    }
 }
 
 // Utility: merge and toggle style spans
@@ -1500,6 +1528,50 @@ private fun AttachmentList(
     val thumbDp = 40.dp
     val ctx = LocalContext.current
 
+    // Long-press state and save launcher
+    var optionsFor by remember { mutableStateOf<Note.Attachment?>(null) }
+    var pendingSave by remember { mutableStateOf<Note.Attachment?>(null) }
+    val contentResolver = ctx.contentResolver
+    val coroutineScope = rememberCoroutineScope()
+    var isSaving by remember { mutableStateOf(false) }
+
+    val createDocumentLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("*/*")
+    ) { uri: Uri? ->
+        val toSave = pendingSave
+        if (uri != null && toSave != null) {
+            // Offload heavy I/O to IO dispatcher
+            isSaving = true
+            coroutineScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        val inputStream = if (toSave.uri.startsWith("/")) {
+                            java.io.File(toSave.uri).inputStream()
+                        } else {
+                            contentResolver.openInputStream(toSave.uri.toUri())
+                        }
+                        inputStream?.use { inp ->
+                            contentResolver.openOutputStream(uri)?.use { out ->
+                                inp.copyTo(out)
+                            }
+                        } ?: throw java.io.IOException("Unable to open input for ${toSave.uri}")
+                    }
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(ctx, "Saved", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Log.w("NoteScreen", "Failed to save attachment ${toSave.uri}: ${e.message}")
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(ctx, "Save failed", Toast.LENGTH_SHORT).show()
+                    }
+                } finally {
+                    isSaving = false
+                }
+             }
+         }
+         pendingSave = null
+     }
+
     Column {
         Text(text = "Attachments", color = Color.DarkGray)
         for (att in attachments) {
@@ -1508,34 +1580,42 @@ private fun AttachmentList(
                 .padding(vertical = 4.dp)
 
             Row(
-                modifier = rowModifier.clickable {
-                    // Open the attachment when tapped
-                    try {
-                        val intent = Intent(Intent.ACTION_VIEW)
-                        val attFile = java.io.File(att.uri)
-                        val isInternal = attFile.exists() && attFile.absolutePath.startsWith(attachmentsDir.absolutePath)
-                        if (isInternal) {
-                            val contentUri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", attFile)
-                            intent.setDataAndType(contentUri, att.mimeType ?: "*/*")
-                            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        } else {
-                            // Try parsing as URI (content:// or http). If parsing fails, fall back to file path.
-                            val maybeUri = try { Uri.parse(att.uri) } catch (_: Exception) { null }
-                            if (maybeUri != null) {
-                                intent.setDataAndType(maybeUri, att.mimeType ?: ctx.contentResolver.getType(maybeUri) ?: "*/*")
+                modifier = rowModifier.combinedClickable(
+                    onClick = {
+                        // Open the attachment when tapped
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW)
+                            val attFile = java.io.File(att.uri)
+                            val isInternal = attFile.exists() && attFile.absolutePath.startsWith(attachmentsDir.absolutePath)
+                            if (isInternal) {
+                                val contentUri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", attFile)
+                                intent.setDataAndType(contentUri, att.mimeType ?: "*/*")
                                 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             } else {
-                                Toast.makeText(ctx, "Unable to open attachment", Toast.LENGTH_SHORT).show()
-                                return@clickable
+                                // Try parsing as URI (content:// or http). If parsing fails, fall back to file path.
+                                val maybeUri = try { att.uri.toUri() } catch (_: Exception) { null }
+                                if (maybeUri != null) {
+                                    intent.setDataAndType(maybeUri, att.mimeType ?: ctx.contentResolver.getType(maybeUri) ?: "*/*")
+                                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                } else {
+                                    Toast.makeText(ctx, "Unable to open attachment", Toast.LENGTH_SHORT).show()
+                                    return@combinedClickable
+                                }
                             }
+                            // Use Activity startActivity; add NEW_TASK when context isn't an Activity
+                            val chooser = Intent.createChooser(intent, att.displayName ?: "Open attachment")
+                            if (ctx !is android.app.Activity) chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            ctx.startActivity(chooser)
+                        } catch (e: Exception) {
+                            Log.w("NoteScreen", "Failed to open attachment ${att.uri}: ${e.message}")
+                            Toast.makeText(ctx, "Cannot open file", Toast.LENGTH_SHORT).show()
                         }
-                        // Use startActivity with context
-                        ContextCompat.startActivity(ctx, Intent.createChooser(intent, att.displayName ?: "Open attachment"), null)
-                    } catch (e: Exception) {
-                        Log.w("NoteScreen", "Failed to open attachment ${att.uri}: ${e.message}")
-                        Toast.makeText(ctx, "Cannot open file", Toast.LENGTH_SHORT).show()
+                    },
+                    onLongClick = {
+                        // Show options dialog for this attachment
+                        optionsFor = att
                     }
-                },
+                ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val mime = att.mimeType ?: run {
@@ -1581,6 +1661,67 @@ private fun AttachmentList(
                     Icon(Icons.Filled.RemoveCircleOutline, contentDescription = "Remove Attachment")
                 }
             }
-        }
-    }
+
+            // Long-press options dialog anchored per-attachment
+            if (optionsFor == att) {
+                AlertDialog(
+                    onDismissRequest = { optionsFor = null },
+                    title = { Text(text = att.displayName ?: "Attachment") },
+                    text = { Text(text = "Choose an action") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            // Share
+                            try {
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = att.mimeType ?: "*/*"
+                                    val attFile = java.io.File(att.uri)
+                                    if (attFile.exists() && attFile.absolutePath.startsWith(attachmentsDir.absolutePath)) {
+                                        val contentUri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", attFile)
+                                        putExtra(Intent.EXTRA_STREAM, contentUri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    } else {
+                                        val maybeUri = try { att.uri.toUri() } catch (_: Exception) { null }
+                                        if (maybeUri != null) {
+                                            putExtra(Intent.EXTRA_STREAM, maybeUri)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                    }
+                                }
+                                val chooser = Intent.createChooser(shareIntent, "Share ${att.displayName ?: "file"}")
+                                if (ctx !is android.app.Activity) chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                ctx.startActivity(chooser)
+                            } catch (e: Exception) {
+                                Log.w("NoteScreen", "Share failed: ${e.message}")
+                                Toast.makeText(ctx, "Share failed", Toast.LENGTH_SHORT).show()
+                            }
+                            optionsFor = null
+                        }) { Text("Share") }
+                    },
+                    dismissButton = {
+                        Row {
+                            TextButton(onClick = {
+                                // Save: launch CreateDocument to let user pick a location
+                                pendingSave = att
+                                val suggested = att.displayName ?: try { java.io.File(att.uri).name } catch (_: Exception) { "attachment" }
+                                createDocumentLauncher.launch(suggested)
+                                optionsFor = null
+                            }) { Text("Save") }
+                             TextButton(onClick = { optionsFor = null }) { Text("Cancel") }
+                         }
+                     }
+                 )
+
+                 // Show a modal progress dialog while saving this specific attachment
+                if (isSaving && pendingSave?.uri == att.uri) {
+                    AlertDialog(onDismissRequest = {}, title = { Text("Saving…") }, text = {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(modifier = Modifier.size(8.dp))
+                            Text("Saving file…")
+                        }
+                    }, confirmButton = {})
+                }
+            } // end for (att in attachments)
+        } // end Column
+    } // end AttachmentList
 }
