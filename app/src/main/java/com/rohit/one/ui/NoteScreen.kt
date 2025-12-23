@@ -35,7 +35,7 @@ import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.FormatUnderlined
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RemoveCircleOutline
-import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -88,6 +88,13 @@ import com.rohit.one.data.Note
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.hypot
+
+import android.content.Intent
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.net.toUri
 
 // --- New structured model for the editor ---
 
@@ -156,7 +163,7 @@ private class BlockHistory(private val limit: Int = 20) {
         if (index < stack.lastIndex) {
             index++
             val result = stack.getOrNull(index)?.deepCopy()
-            Log.d("BlockHistory", "redo: after index=$index stackLastIndex=${stack.lastIndex} result=${result != null}")
+            Log.d("BlockHistory", "redo: after index=$index stackLastIndex=${stackLastIndex} result=${result != null}")
             return result
         }
         Log.d("BlockHistory", "redo: at end of stack")
@@ -220,7 +227,46 @@ fun NoteScreen(
         )
     }
 
-    // Index of the block that should grab focus on the next recomposition (-1 = none)
+    // Attachments state (new) - keep track of attachments in the editor
+    var attachments by remember { mutableStateOf(note?.attachments ?: emptyList()) }
+
+    // Activity Result launcher for picking multiple documents
+    val pickLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val contentResolver = context.contentResolver
+        val newAttachments = mutableListOf<Note.Attachment>()
+        for (uri in uris) {
+            try {
+                // Persist read permission so URI can be used later
+                try {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (e: Exception) {
+                    // ignore if permission can't be persisted
+                    Log.w("NoteScreen", "takePersistableUriPermission failed for $uri: ${e.message}")
+                }
+
+                // Query display name
+                var displayName: String? = null
+                contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        displayName = cursor.getString(0)
+                    }
+                }
+                val mime = contentResolver.getType(uri)
+                val attach = Note.Attachment(uri = uri.toString(), displayName = displayName, mimeType = mime)
+                // Avoid duplicates
+                if (attachments.none { it.uri == attach.uri } && newAttachments.none { it.uri == attach.uri }) {
+                    newAttachments.add(attach)
+                }
+            } catch (e: Exception) {
+                Log.w("NoteScreen", "Failed to add attachment for $uri: ${e.message}")
+            }
+        }
+        if (newAttachments.isNotEmpty()) attachments = attachments + newAttachments
+    }
+
     var focusedBlockIndex by remember { mutableIntStateOf(-1) }
 
     val history = remember { BlockHistory().apply { push(editorState) } }
@@ -241,7 +287,7 @@ fun NoteScreen(
             id = note?.id ?: 0,
             title = editorState.title,
             content = markdown,
-            attachments = note?.attachments ?: emptyList(),
+            attachments = attachments,
             paths = drawingState.strokes,
             lastModified = System.currentTimeMillis()
         )
@@ -374,10 +420,12 @@ fun NoteScreen(
                                 tint = if (isEraserActive) Color.Black else Color.LightGray
                             )
                         }
-                        // Select mode remains disabled placeholder
-                        IconButton(onClick = { /* Select mode can be added later */ }, enabled = false) {
-                            Icon(Icons.Filled.TouchApp, contentDescription = "Select Mode", tint = Color.LightGray)
+
+                        // Attach file button (new)
+                        IconButton(onClick = { pickLauncher.launch(arrayOf("*/*")) }) {
+                            Icon(Icons.Filled.AttachFile, contentDescription = "Attach File", tint = Color.Black)
                         }
+
                         IconButton(onClick = {
                             // Always use BlockHistory for undo, update both editorState and drawingState
                             val result = history.undo()
@@ -509,6 +557,16 @@ fun NoteScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // Attachments header (new)
+                if (attachments.isNotEmpty()) {
+                    item {
+                        AttachmentList(
+                            attachments = attachments,
+                            onRemove = { toRemove: Note.Attachment -> attachments = attachments.filter { it.uri != toRemove.uri } }
+                        )
+                    }
+                }
+
                 itemsIndexed(editorState.blocks, key = { index, _ -> index }) { index, block ->
                     val isLastBlock = index == editorState.blocks.lastIndex
                     val thisShouldFocus = index == focusedBlockIndex
@@ -663,7 +721,7 @@ fun NoteScreen(
                                     if (current.text != newText) {
                                         Log.d(
                                             "NoteScreen",
-                                            "Numbered onTextChange index=$index guarded old='${current.text}' new='$newText'"
+                                            "Numbered onTextChange index=$index guarded old='${current.text}' new='$newText' lengthDelta=${newText.length - current.text.length}"
                                         )
                                         // Extra guard: ignore a stale empty update if the current block
                                         // already has non-empty text (e.g., the next item after deletion).
@@ -1387,3 +1445,29 @@ private fun jsonToSpanList(json: String): List<StyleSpan> {
     }
 }
 
+// Add AttachmentList implementation (was missing)
+@Composable
+private fun AttachmentList(
+    attachments: List<Note.Attachment>,
+    onRemove: (Note.Attachment) -> Unit
+) {
+    Column {
+        Text(text = "Attachments", color = Color.DarkGray)
+        for (att in attachments) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val display = att.displayName ?: run {
+                    try {
+                        att.uri.toUri().lastPathSegment ?: att.uri
+                    } catch (_: Exception) { att.uri }
+                }
+                Text(text = display, modifier = Modifier.weight(1f))
+                IconButton(onClick = { onRemove(att) }) {
+                    Icon(Icons.Filled.RemoveCircleOutline, contentDescription = "Remove Attachment")
+                }
+            }
+        }
+    }
+}
