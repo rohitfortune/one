@@ -88,12 +88,6 @@ import com.rohit.one.data.Note
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.hypot
-
-import android.content.Intent
-import android.net.Uri
-import android.provider.OpenableColumns
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.net.toUri
 
 // --- New structured model for the editor ---
@@ -231,32 +225,47 @@ fun NoteScreen(
     var attachments by remember { mutableStateOf(note?.attachments ?: emptyList()) }
 
     // Activity Result launcher for picking multiple documents
-    val pickLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris: List<Uri> ->
+    val pickLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<android.net.Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         val contentResolver = context.contentResolver
         val newAttachments = mutableListOf<Note.Attachment>()
+        // Directory to store copied attachments inside app internal storage
+        val attachmentsDir = java.io.File(context.filesDir, "attachments")
+        if (!attachmentsDir.exists()) attachmentsDir.mkdirs()
+
         for (uri in uris) {
             try {
-                // Persist read permission so URI can be used later
-                try {
-                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                } catch (e: Exception) {
-                    // ignore if permission can't be persisted
-                    Log.w("NoteScreen", "takePersistableUriPermission failed for $uri: ${e.message}")
-                }
-
-                // Query display name
+                // Try to query display name
                 var displayName: String? = null
-                contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
                     if (cursor.moveToFirst()) {
                         displayName = cursor.getString(0)
                     }
                 }
+
                 val mime = contentResolver.getType(uri)
-                val attach = Note.Attachment(uri = uri.toString(), displayName = displayName, mimeType = mime)
-                // Avoid duplicates
+
+                // Copy the content to internal storage
+                val safeName = (displayName ?: uri.lastPathSegment ?: "attachment").replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val timestamp = System.currentTimeMillis()
+                val targetFile = java.io.File(attachmentsDir, "${timestamp}_$safeName")
+
+                try {
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        targetFile.outputStream().use { out ->
+                            input.copyTo(out)
+                        }
+                    } ?: throw java.io.IOException("Unable to open input stream for $uri")
+                } catch (copyEx: Exception) {
+                    Log.w("NoteScreen", "Failed to copy attachment $uri -> ${targetFile.absolutePath}: ${copyEx.message}")
+                    // If copy failed, don't add this attachment
+                    continue
+                }
+
+                val attach = Note.Attachment(uri = targetFile.absolutePath, displayName = displayName, mimeType = mime)
+                // Avoid duplicates by internal path
                 if (attachments.none { it.uri == attach.uri } && newAttachments.none { it.uri == attach.uri }) {
                     newAttachments.add(attach)
                 }
@@ -1471,3 +1480,4 @@ private fun AttachmentList(
         }
     }
 }
+
