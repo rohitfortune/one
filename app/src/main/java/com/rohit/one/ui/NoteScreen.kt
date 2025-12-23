@@ -53,6 +53,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -107,7 +108,8 @@ private sealed class NoteBlock {
 
 private data class NoteEditorState(
     val title: String,
-    val blocks: List<NoteBlock>
+    val blocks: List<NoteBlock>,
+    val strokes: List<Note.Path> = emptyList() // Add strokes to track drawing
 )
 
 // Very small history stack for undo/redo on the new model
@@ -115,29 +117,49 @@ private class BlockHistory(private val limit: Int = 20) {
     private val stack = mutableListOf<NoteEditorState>()
     private var index = -1
 
+    val currentIndex: Int
+        get() = index
+    val stackLastIndex: Int
+        get() = stack.lastIndex
+
+
     fun push(state: NoteEditorState) {
-        if (stack.size > limit) {
+        // If not at the end, remove all states after the current index
+        if (index < stack.lastIndex) {
+            for (i in stack.lastIndex downTo index + 1) {
+                stack.removeAt(i)
+            }
+        }
+        if (stack.size >= limit) {
             stack.removeAt(0)
             if (index > 0) index--
         }
-        while (stack.lastIndex > index) stack.removeAt(stack.lastIndex)
         stack.add(state.copy(blocks = state.blocks.map { it.copyBlock() }))
         index = stack.lastIndex
+        Log.d("BlockHistory", "push: after size=${stack.size} index=$index stackLastIndex=${stack.lastIndex} blocks=${state.blocks.size}")
     }
 
     fun undo(): NoteEditorState? {
+        Log.d("BlockHistory", "undo: before index=$index stackLastIndex=${stack.lastIndex}")
         if (index > 0) {
             index--
-            return stack[index].deepCopy()
+            val result = stack.getOrNull(index)?.deepCopy()
+            Log.d("BlockHistory", "undo: after index=$index stackLastIndex=${stack.lastIndex} result=${result != null}")
+            return result
         }
-        return null
+        Log.d("BlockHistory", "undo: at beginning of stack")
+        return stack.getOrNull(index)?.deepCopy()
     }
 
     fun redo(): NoteEditorState? {
+        Log.d("BlockHistory", "redo: before index=$index stackLastIndex=${stack.lastIndex}")
         if (index < stack.lastIndex) {
             index++
-            return stack[index].deepCopy()
+            val result = stack.getOrNull(index)?.deepCopy()
+            Log.d("BlockHistory", "redo: after index=$index stackLastIndex=${stack.lastIndex} result=${result != null}")
+            return result
         }
+        Log.d("BlockHistory", "redo: at end of stack")
         return null
     }
 
@@ -192,7 +214,8 @@ fun NoteScreen(
         mutableStateOf(
             NoteEditorState(
                 title = note?.title ?: "",
-                blocks = initialBlocks
+                blocks = initialBlocks,
+                strokes = note?.paths ?: emptyList() // initialize with note's paths
             )
         )
     }
@@ -201,10 +224,6 @@ fun NoteScreen(
     var focusedBlockIndex by remember { mutableIntStateOf(-1) }
 
     val history = remember { BlockHistory().apply { push(editorState) } }
-
-    fun pushHistory() {
-        history.push(editorState)
-    }
 
     var drawingState by remember(note?.paths) {
         mutableStateOf(
@@ -232,6 +251,15 @@ fun NoteScreen(
 
     var editMode by remember { mutableStateOf(EditMode.TEXT) }
     var isEraserActive by remember { mutableStateOf(false) }
+
+    // Added historyVersion state variable to force recomposition after undo/redo
+    var historyVersion by remember { mutableIntStateOf(0) }
+
+    fun pushHistory() {
+        history.push(editorState.copy(strokes = drawingState.strokes))
+        Log.d("BlockHistory", "pushHistory: index=${history.currentIndex} stackLastIndex=${history.stackLastIndex} canUndo=${history.canUndo()} canRedo=${history.canRedo()}")
+        historyVersion++ // Force recomposition so undo button updates
+    }
 
     Scaffold(
         containerColor = Color.White,
@@ -299,81 +327,89 @@ fun NoteScreen(
                 )
 
                 // Secondary toolbar – reuse icons for text mode / undo / redo, plus list and checklist tools.
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color.White)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceAround,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Pen icon is the single toggle between TEXT and DRAW modes
-                    IconButton(onClick = {
-                        if (isEraserActive) return@IconButton // Don't allow mode switch while eraser is active
-                        val newMode = if (editMode == EditMode.TEXT) EditMode.DRAW else EditMode.TEXT
-                        editMode = newMode
-                        drawingState = drawingState.copy(
-                            isDrawing = (newMode == EditMode.DRAW),
-                            currentStroke = null
-                        )
-                        if (newMode == EditMode.DRAW) {
-                            focusManager.clearFocus(force = true)
-                            keyboardController?.hide()
-                        }
-                    }) {
-                        Icon(
-                            Icons.Filled.Colorize,
-                            contentDescription = "Toggle Draw Mode",
-                            tint = if (editMode == EditMode.DRAW && !isEraserActive) Color.Black else Color.Gray
-                        )
-                    }
-                    // Erase button: toggles eraser mode
-                    IconButton(
-                        onClick = {
-                            isEraserActive = !isEraserActive
-                            if (isEraserActive) {
-                                focusManager.clearFocus(force = true)
-                                editMode = EditMode.TEXT // Always leave draw mode when eraser is active
-                                drawingState = drawingState.copy(isDrawing = false, currentStroke = null)
-                            }
-                        },
-                        enabled = true
+                key(historyVersion) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceAround,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            Icons.Filled.RemoveCircleOutline,
-                            contentDescription = "Eraser Mode",
-                            tint = if (isEraserActive) Color.Black else Color.LightGray
-                        )
-                    }
-                    // Select mode remains disabled placeholder
-                    IconButton(onClick = { /* Select mode can be added later */ }, enabled = false) {
-                        Icon(Icons.Filled.TouchApp, contentDescription = "Select Mode", tint = Color.LightGray)
-                    }
-                    IconButton(onClick = {
-                        // Undo last drawing stroke if any, otherwise fall back to text undo
-                        if (drawingState.strokes.isNotEmpty()) {
+                        // Pen icon is the single toggle between TEXT and DRAW modes
+                        IconButton(onClick = {
+                            if (isEraserActive) return@IconButton // Don't allow mode switch while eraser is active
+                            val newMode = if (editMode == EditMode.TEXT) EditMode.DRAW else EditMode.TEXT
+                            editMode = newMode
                             drawingState = drawingState.copy(
-                                strokes = drawingState.strokes.dropLast(1),
+                                isDrawing = (newMode == EditMode.DRAW),
                                 currentStroke = null
                             )
-                        } else {
-                            history.undo()?.let { editorState = it }
+                            if (newMode == EditMode.DRAW) {
+                                focusManager.clearFocus(force = true)
+                                keyboardController?.hide()
+                            }
+                        }) {
+                            Icon(
+                                Icons.Filled.Colorize,
+                                contentDescription = "Toggle Draw Mode",
+                                tint = if (editMode == EditMode.DRAW && !isEraserActive) Color.Black else Color.Gray
+                            )
                         }
-                    }, enabled = history.canUndo() || drawingState.strokes.isNotEmpty()) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Undo,
-                            contentDescription = "Undo",
-                            tint = if (history.canUndo() || drawingState.strokes.isNotEmpty()) Color.Black else Color.Gray
-                        )
-                    }
-                    IconButton(onClick = {
-                        history.redo()?.let { editorState = it }
-                    }, enabled = history.canRedo()) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Redo,
-                            contentDescription = "Redo",
-                            tint = if (history.canRedo()) Color.Black else Color.Gray
-                        )
+                        // Erase button: toggles eraser mode
+                        IconButton(
+                            onClick = {
+                                isEraserActive = !isEraserActive
+                                if (isEraserActive) {
+                                    focusManager.clearFocus(force = true)
+                                    editMode = EditMode.TEXT // Always leave draw mode when eraser is active
+                                    drawingState = drawingState.copy(isDrawing = false, currentStroke = null)
+                                }
+                            },
+                            enabled = true
+                        ) {
+                            Icon(
+                                Icons.Filled.RemoveCircleOutline,
+                                contentDescription = "Eraser Mode",
+                                tint = if (isEraserActive) Color.Black else Color.LightGray
+                            )
+                        }
+                        // Select mode remains disabled placeholder
+                        IconButton(onClick = { /* Select mode can be added later */ }, enabled = false) {
+                            Icon(Icons.Filled.TouchApp, contentDescription = "Select Mode", tint = Color.LightGray)
+                        }
+                        IconButton(onClick = {
+                            // Always use BlockHistory for undo, update both editorState and drawingState
+                            val result = history.undo()
+                            Log.d("BlockHistory", "undo: index=${history.currentIndex} stackLastIndex=${history.stackLastIndex}")
+                            result?.let {
+                                editorState = it
+                                drawingState = drawingState.copy(strokes = it.strokes)
+                            }
+                            Log.d("BlockHistory", "after undo: canUndo=${history.canUndo()} canRedo=${history.canRedo()} index=${history.currentIndex} stackLastIndex=${history.stackLastIndex}")
+                            historyVersion++ // Force recomposition
+                        }, enabled = history.canUndo()) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Undo,
+                                contentDescription = "Undo",
+                                tint = if (history.canUndo()) Color.Black else Color.Gray
+                            )
+                        }
+                        IconButton(onClick = {
+                            val result = history.redo()
+                            result?.let {
+                                editorState = it
+                                drawingState = drawingState.copy(strokes = it.strokes)
+                            }
+                            Log.d("BlockHistory", "after redo: canUndo=${history.canUndo()} canRedo=${history.canRedo()} index=${history.currentIndex} stackLastIndex=${history.stackLastIndex}")
+                            historyVersion++ // Force recomposition
+                        }, enabled = history.canRedo().also { Log.d("BlockHistory", "redo button enabled: canRedo=${history.canRedo()} index=${history.currentIndex} stackLastIndex=${history.stackLastIndex}") }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Redo,
+                                contentDescription = "Redo",
+                                tint = if (history.canRedo()) Color.Black else Color.Gray
+                            )
+                        }
                     }
                 }
 
@@ -490,6 +526,7 @@ fun NoteScreen(
                                         blocks[index] = current.copy(text = newText, spans = newSpans)
                                         editorState = editorState.copy(blocks = blocks)
                                         blockSelection[index] = newSelection
+                                        pushHistory() // Push paragraph changes to history for undo
                                     }
                                 }
                             },
@@ -741,7 +778,23 @@ fun NoteScreen(
                 drawingState = drawingState,
                 isInputEnabled = (drawingState.isDrawing && !isEraserActive) || isEraserActive,
                 isEraserActive = isEraserActive,
-                onUpdateDrawingState = { transform -> drawingState = transform(drawingState) }
+                onUpdateDrawingState = { transform ->
+                    val prevStrokes = drawingState.strokes
+                    val prevCount = prevStrokes.size
+                    drawingState = transform(drawingState)
+                    val newStrokes = drawingState.strokes
+                    val newCount = newStrokes.size
+                    // Detect stroke add
+                    if (newCount > prevCount) {
+                        Log.d("BlockHistory", "pushHistory after drawing add: strokes=$newCount")
+                        pushHistory()
+                    }
+                    // Detect stroke erase
+                    if (newCount < prevCount) {
+                        Log.d("BlockHistory", "pushHistory after drawing erase: strokes=$newCount")
+                        pushHistory()
+                    }
+                }
             )
         }
     }
@@ -1333,6 +1386,4 @@ private fun jsonToSpanList(json: String): List<StyleSpan> {
         emptyList()
     }
 }
-
-
 
