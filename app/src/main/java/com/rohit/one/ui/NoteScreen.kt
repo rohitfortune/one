@@ -1,8 +1,11 @@
 package com.rohit.one.ui
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -25,8 +29,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Colorize
 import androidx.compose.material.icons.filled.FormatBold
@@ -34,8 +41,9 @@ import androidx.compose.material.icons.filled.FormatItalic
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.FormatUnderlined
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.RemoveCircleOutline
-import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -66,8 +74,10 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.SpanStyle
@@ -88,7 +98,6 @@ import com.rohit.one.data.Note
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.hypot
-import androidx.core.net.toUri
 
 // --- New structured model for the editor ---
 
@@ -224,6 +233,24 @@ fun NoteScreen(
     // Attachments state (new) - keep track of attachments in the editor
     var attachments by remember { mutableStateOf(note?.attachments ?: emptyList()) }
 
+    // Directory for attachments in internal storage
+    val attachmentsDir = java.io.File(context.filesDir, "attachments").apply { if (!exists()) mkdirs() }
+
+    // Helper to safely delete an attachment file that we copied into internal storage
+    fun deleteInternalAttachment(att: Note.Attachment) {
+        try {
+            val f = java.io.File(att.uri)
+            if (f.exists() && f.absolutePath.startsWith(attachmentsDir.absolutePath)) {
+                val ok = f.delete()
+                Log.d("NoteScreen", "Deleted attachment file ${f.absolutePath}: $ok")
+            } else {
+                Log.d("NoteScreen", "Skipping delete for ${att.uri}, not inside attachmentsDir")
+            }
+        } catch (e: Exception) {
+            Log.w("NoteScreen", "Failed to delete attachment file ${att.uri}: ${e.message}")
+        }
+    }
+
     // Activity Result launcher for picking multiple documents
     val pickLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()
@@ -242,7 +269,7 @@ fun NoteScreen(
                 contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
                     if (cursor.moveToFirst()) {
                         displayName = cursor.getString(0)
-                    }
+                      }
                 }
 
                 val mime = contentResolver.getType(uri)
@@ -366,6 +393,10 @@ fun NoteScreen(
                                     text = { Text("Delete") },
                                     onClick = {
                                         menuExpanded = false
+                                        // Delete copied internal files for attachments (if any) before deleting the note
+                                        // 'note' is non-null in this branch; prefer its attachments when editor attachments are empty
+                                        val toDelete = attachments.ifEmpty { note.attachments }
+                                        toDelete.forEach { att -> deleteInternalAttachment(att) }
                                         onDelete(note)
                                     }
                                 )
@@ -571,7 +602,11 @@ fun NoteScreen(
                     item {
                         AttachmentList(
                             attachments = attachments,
-                            onRemove = { toRemove: Note.Attachment -> attachments = attachments.filter { it.uri != toRemove.uri } }
+                            onRemove = { toRemove: Note.Attachment ->
+                                // remove the physical file (if internal) and then update state
+                                deleteInternalAttachment(toRemove)
+                                attachments = attachments.filter { it.uri != toRemove.uri }
+                            }
                         )
                     }
                 }
@@ -749,15 +784,15 @@ fun NoteScreen(
                                         while (runEnd < blocks.size && blocks[runEnd] is NoteBlock.NumberedItem) {
                                             runEnd++
                                         }
-                                        var localIndex = 1
-                                        for (i in runStart until runEnd) {
-                                            val b = blocks[i] as NoteBlock.NumberedItem
-                                            if (b.index != localIndex) {
-                                                blocks[i] = b.copy(index = localIndex)
-                                            }
-                                            localIndex++
-                                        }
-                                        runStart = runEnd
+                                      var localIndex = 1
+                                      for (i in runStart until runEnd) {
+                                          val b = blocks[i] as NoteBlock.NumberedItem
+                                          if (b.index != localIndex) {
+                                              blocks[i] = b.copy(index = localIndex)
+                                          }
+                                          localIndex++
+                                      }
+                                      runStart = runEnd
                                     }
                                     editorState = editorState.copy(blocks = blocks)
                                     pushHistory()
@@ -1454,24 +1489,73 @@ private fun jsonToSpanList(json: String): List<StyleSpan> {
     }
 }
 
-// Add AttachmentList implementation (was missing)
+// AttachmentList: show small mime-aware preview (image thumbnail or mime icon) and a remove button
 @Composable
 private fun AttachmentList(
     attachments: List<Note.Attachment>,
     onRemove: (Note.Attachment) -> Unit
 ) {
+    val thumbDp = 40.dp
+    val thumbPx = with(LocalDensity.current) { thumbDp.roundToPx() }
+
     Column {
         Text(text = "Attachments", color = Color.DarkGray)
         for (att in attachments) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                val display = att.displayName ?: run {
-                    try {
-                        att.uri.toUri().lastPathSegment ?: att.uri
-                    } catch (_: Exception) { att.uri }
+                val mime = att.mimeType ?: run {
+                    val ext = try { java.io.File(att.uri).extension.lowercase() } catch (_: Exception) { "" }
+                    when (ext) {
+                        "png", "jpg", "jpeg", "gif", "webp" -> "image/$ext"
+                        "pdf" -> "application/pdf"
+                        "mp3", "wav", "m4a" -> "audio/*"
+                        "mp4", "mov", "mkv" -> "video/*"
+                        else -> ""
+                    }
                 }
+
+                if (mime.startsWith("image/")) {
+                    val bitmap = remember(att.uri, thumbPx) {
+                        try { decodeSampledBitmapFromFile(att.uri, thumbPx, thumbPx) } catch (_: Exception) { null }
+                    }
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = att.displayName ?: "attachment",
+                            modifier = Modifier
+                                .size(thumbDp)
+                                .padding(end = 8.dp)
+                        )
+                    } else {
+                        Icon(
+                            Icons.AutoMirrored.Filled.InsertDriveFile,
+                            contentDescription = "file",
+                            modifier = Modifier
+                                .size(thumbDp)
+                                .padding(end = 8.dp)
+                        )
+                    }
+                } else {
+                    val icon = when {
+                        mime == "application/pdf" || att.uri.endsWith(".pdf", true) -> Icons.Filled.PictureAsPdf
+                        mime.startsWith("audio") || att.uri.endsWith(".mp3", true) -> Icons.Filled.Audiotrack
+                        mime.startsWith("video") || att.uri.endsWith(".mp4", true) -> Icons.Filled.Movie
+                        else -> Icons.AutoMirrored.Filled.InsertDriveFile
+                    }
+                    Icon(
+                        icon,
+                        contentDescription = "file",
+                        modifier = Modifier
+                            .size(thumbDp)
+                            .padding(end = 8.dp)
+                    )
+                }
+
+                val display = att.displayName ?: try { java.io.File(att.uri).name } catch (_: Exception) { att.uri }
                 Text(text = display, modifier = Modifier.weight(1f))
                 IconButton(onClick = { onRemove(att) }) {
                     Icon(Icons.Filled.RemoveCircleOutline, contentDescription = "Remove Attachment")
@@ -1481,3 +1565,21 @@ private fun AttachmentList(
     }
 }
 
+// Downsample image decoding helper
+private fun decodeSampledBitmapFromFile(path: String, reqWidth: Int, reqHeight: Int): Bitmap? {
+    return try {
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, options)
+        var inSampleSize = 1
+        val (height, width) = options.outHeight to options.outWidth
+        if (height > reqHeight || width > reqWidth) {
+            val halfHeight = height / 2
+            val halfWidth = width / 2
+            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
+                inSampleSize *= 2
+            }
+        }
+        val opts2 = BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
+        BitmapFactory.decodeFile(path, opts2)
+    } catch (_: Exception) { null }
+}
