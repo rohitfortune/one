@@ -1,12 +1,10 @@
 package com.rohit.one.ui
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -74,10 +72,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.SpanStyle
@@ -94,6 +94,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.rohit.one.data.Note
 import org.json.JSONArray
 import org.json.JSONObject
@@ -258,8 +259,7 @@ fun NoteScreen(
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         val contentResolver = context.contentResolver
         val newAttachments = mutableListOf<Note.Attachment>()
-        // Directory to store copied attachments inside app internal storage
-        val attachmentsDir = java.io.File(context.filesDir, "attachments")
+        // Use the attachmentsDir created above in the outer scope
         if (!attachmentsDir.exists()) attachmentsDir.mkdirs()
 
         for (uri in uris) {
@@ -606,7 +606,8 @@ fun NoteScreen(
                                 // remove the physical file (if internal) and then update state
                                 deleteInternalAttachment(toRemove)
                                 attachments = attachments.filter { it.uri != toRemove.uri }
-                            }
+                            },
+                            attachmentsDir = attachmentsDir
                         )
                     }
                 }
@@ -1493,52 +1494,71 @@ private fun jsonToSpanList(json: String): List<StyleSpan> {
 @Composable
 private fun AttachmentList(
     attachments: List<Note.Attachment>,
-    onRemove: (Note.Attachment) -> Unit
+    onRemove: (Note.Attachment) -> Unit,
+    attachmentsDir: java.io.File
 ) {
     val thumbDp = 40.dp
-    val thumbPx = with(LocalDensity.current) { thumbDp.roundToPx() }
+    val ctx = LocalContext.current
 
     Column {
         Text(text = "Attachments", color = Color.DarkGray)
         for (att in attachments) {
+            val rowModifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                modifier = rowModifier.clickable {
+                    // Open the attachment when tapped
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW)
+                        val attFile = java.io.File(att.uri)
+                        val isInternal = attFile.exists() && attFile.absolutePath.startsWith(attachmentsDir.absolutePath)
+                        if (isInternal) {
+                            val contentUri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", attFile)
+                            intent.setDataAndType(contentUri, att.mimeType ?: "*/*")
+                            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        } else {
+                            // Try parsing as URI (content:// or http). If parsing fails, fall back to file path.
+                            val maybeUri = try { Uri.parse(att.uri) } catch (_: Exception) { null }
+                            if (maybeUri != null) {
+                                intent.setDataAndType(maybeUri, att.mimeType ?: ctx.contentResolver.getType(maybeUri) ?: "*/*")
+                                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            } else {
+                                Toast.makeText(ctx, "Unable to open attachment", Toast.LENGTH_SHORT).show()
+                                return@clickable
+                            }
+                        }
+                        // Use startActivity with context
+                        ContextCompat.startActivity(ctx, Intent.createChooser(intent, att.displayName ?: "Open attachment"), null)
+                    } catch (e: Exception) {
+                        Log.w("NoteScreen", "Failed to open attachment ${att.uri}: ${e.message}")
+                        Toast.makeText(ctx, "Cannot open file", Toast.LENGTH_SHORT).show()
+                    }
+                },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val mime = att.mimeType ?: run {
-                    val ext = try { java.io.File(att.uri).extension.lowercase() } catch (_: Exception) { "" }
-                    when (ext) {
-                        "png", "jpg", "jpeg", "gif", "webp" -> "image/$ext"
-                        "pdf" -> "application/pdf"
-                        "mp3", "wav", "m4a" -> "audio/*"
-                        "mp4", "mov", "mkv" -> "video/*"
-                        else -> ""
-                    }
-                }
+                     val ext = try { java.io.File(att.uri).extension.lowercase() } catch (_: Exception) { "" }
+                     when (ext) {
+                         "png", "jpg", "jpeg", "gif", "webp" -> "image/$ext"
+                         "pdf" -> "application/pdf"
+                         "mp3", "wav", "m4a" -> "audio/*"
+                         "mp4", "mov", "mkv" -> "video/*"
+                         else -> ""
+                     }
+                 }
 
                 if (mime.startsWith("image/")) {
-                    val bitmap = remember(att.uri, thumbPx) {
-                        try { decodeSampledBitmapFromFile(att.uri, thumbPx, thumbPx) } catch (_: Exception) { null }
-                    }
-                    if (bitmap != null) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = att.displayName ?: "attachment",
-                            modifier = Modifier
-                                .size(thumbDp)
-                                .padding(end = 8.dp)
-                        )
-                    } else {
-                        Icon(
-                            Icons.AutoMirrored.Filled.InsertDriveFile,
-                            contentDescription = "file",
-                            modifier = Modifier
-                                .size(thumbDp)
-                                .padding(end = 8.dp)
-                        )
-                    }
+                    // Use Coil to load the image from the internal file path (file:// URI)
+                    val fileUri = if (att.uri.startsWith("/")) "file://${att.uri}" else att.uri
+                    AsyncImage(
+                        model = fileUri,
+                        contentDescription = att.displayName ?: "attachment",
+                        modifier = Modifier
+                            .size(thumbDp)
+                            .padding(end = 8.dp)
+                    )
                 } else {
                     val icon = when {
                         mime == "application/pdf" || att.uri.endsWith(".pdf", true) -> Icons.Filled.PictureAsPdf
@@ -1563,23 +1583,4 @@ private fun AttachmentList(
             }
         }
     }
-}
-
-// Downsample image decoding helper
-private fun decodeSampledBitmapFromFile(path: String, reqWidth: Int, reqHeight: Int): Bitmap? {
-    return try {
-        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(path, options)
-        var inSampleSize = 1
-        val (height, width) = options.outHeight to options.outWidth
-        if (height > reqHeight || width > reqWidth) {
-            val halfHeight = height / 2
-            val halfWidth = width / 2
-            while (halfHeight / inSampleSize >= reqHeight && halfWidth / inSampleSize >= reqWidth) {
-                inSampleSize *= 2
-            }
-        }
-        val opts2 = BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
-        BitmapFactory.decodeFile(path, opts2)
-    } catch (_: Exception) { null }
 }

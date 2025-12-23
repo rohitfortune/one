@@ -81,7 +81,12 @@ dependencies {
     implementation(libs.androidx.compose.material3.adaptive.navigation.suite)
     implementation(libs.androidx.navigation.compose)
     // Compose Foundation (provides HorizontalPager via androidx.compose.foundation.pager)
+    // use version catalog for foundation when possible; fall back to explicit coordinate
+    // (the catalog may not have foundation declared; if it does, use libs.androidx.compose.foundation)
+    // Keep explicit coordinate as a safe fallback
     implementation("androidx.compose.foundation:foundation")
+    // Coil for image loading in Compose (thumbnails for attachments)
+    implementation("io.coil-kt:coil-compose:2.7.0")
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
