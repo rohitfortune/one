@@ -43,9 +43,9 @@ fun StrokeBottomSheet(
                 .clipToBounds(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("Stroke", style = MaterialTheme.typography.titleMedium)
+            // title removed per request
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             ColorPicker(
                 initialHue = hsv[0],
@@ -60,9 +60,8 @@ fun StrokeBottomSheet(
                     .height(220.dp)
             )
 
-            Spacer(modifier = Modifier.height(50.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            Text("Width: ${widthDp.toInt()} dp", fontSize = 14.sp)
             Slider(
                 value = widthDp,
                 onValueChange = {

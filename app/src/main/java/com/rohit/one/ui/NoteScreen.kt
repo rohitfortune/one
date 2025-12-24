@@ -111,6 +111,7 @@ import org.json.JSONObject
 import kotlin.math.hypot
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.graphics.toArgb
 
 // --- New structured model for the editor ---
 
@@ -1556,7 +1557,9 @@ private fun DrawingOverlay(
                     var currentStroke = Note.Path(
                         points = listOf(Note.Point(down.position.x, initialY)),
                         anchorBlockIndex = anchorIndex,
-                        anchorLocalTop = if (anchorIndex != null) initialY else null
+                        anchorLocalTop = if (anchorIndex != null) initialY else null,
+                        colorArgb = strokeColor.toArgb(),
+                        widthDp = strokeWidthDp.value
                     )
                     onUpdateDrawingState { state -> state.copy(currentStroke = currentStroke) }
 
@@ -1591,7 +1594,6 @@ private fun DrawingOverlay(
 
     Canvas(modifier = modifier.then(inputModifier)) {
         // Draw all persisted strokes
-        val strokeWidth = with(density) { strokeWidthDp.toPx() }
         val visibleBlockSetForDraw = listState.layoutInfo.visibleItemsInfo.map { it.index - blockStartIndex }.toSet()
         fun Note.Path.toPath(): Path {
              val p = Path()
@@ -1615,17 +1617,21 @@ private fun DrawingOverlay(
              return p
          }
         drawingState.strokes.forEach { stroke ->
+            val strokeColorLocal = Color(stroke.colorArgb)
+            val strokeWidthLocal = with(density) { stroke.widthDp.dp.toPx() }
             drawPath(
                 path = stroke.toPath(),
-                color = strokeColor,
-                style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
+                color = strokeColorLocal,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidthLocal)
             )
         }
         drawingState.currentStroke?.let { stroke ->
+            val strokeColorLocal = Color(stroke.colorArgb)
+            val strokeWidthLocal = with(density) { stroke.widthDp.dp.toPx() }
             drawPath(
                 path = stroke.toPath(),
-                color = strokeColor,
-                style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
+                color = strokeColorLocal,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidthLocal)
             )
         }
     }
@@ -1865,7 +1871,7 @@ private fun AttachmentList(
                                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                     type = att.mimeType ?: "*/*"
                                     val attFile = java.io.File(att.uri)
-                                    if (attFile.exists() && attFile.absolutePath.startsWith(attachmentsDir.absolutePath)) {
+                                    if ( attFile.exists() && attFile.absolutePath.startsWith(attachmentsDir.absolutePath)) {
                                         val contentUri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", attFile)
                                         putExtra(Intent.EXTRA_STREAM, contentUri)
                                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -1915,7 +1921,5 @@ private fun AttachmentList(
         }
     }
 }
-
-
 
 

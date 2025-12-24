@@ -24,7 +24,10 @@ data class Note(
         val points: List<Point>,
         val anchorBlockIndex: Int? = null,
         val anchorLocalTop: Float? = null,
-        val anchorCreatedTop: Float? = null
+        val anchorCreatedTop: Float? = null,
+        // Per-stroke style: color as ARGB int and width in dp
+        val colorArgb: Int = 0xFF000000.toInt(),
+        val widthDp: Float = 4f
     )
 
     data class Point(
