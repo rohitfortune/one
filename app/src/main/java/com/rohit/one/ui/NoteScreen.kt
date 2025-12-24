@@ -479,16 +479,24 @@ fun NoteScreen(
                     ) {
                         // Pen icon is the single toggle between TEXT and DRAW modes
                         IconButton(onClick = {
-                            if (isEraserActive) return@IconButton // Don't allow mode switch while eraser is active
-                            val newMode = if (editMode == EditMode.TEXT) EditMode.DRAW else EditMode.TEXT
-                            editMode = newMode
-                            drawingState = drawingState.copy(
-                                isDrawing = (newMode == EditMode.DRAW),
-                                currentStroke = null
-                            )
-                            if (newMode == EditMode.DRAW) {
+                            if (isEraserActive){
+                                // If eraser was active, turn it off and enter DRAW mode immediately
+                                isEraserActive = false
+                                editMode = EditMode.DRAW
+                                drawingState = drawingState.copy(isDrawing = true, currentStroke = null)
                                 focusManager.clearFocus(force = true)
                                 keyboardController?.hide()
+                            }else{
+                                val newMode = if (editMode == EditMode.TEXT) EditMode.DRAW else EditMode.TEXT
+                                editMode = newMode
+                                drawingState = drawingState.copy(
+                                    isDrawing = (newMode == EditMode.DRAW),
+                                    currentStroke = null
+                                )
+                                if (newMode == EditMode.DRAW) {
+                                    focusManager.clearFocus(force = true)
+                                    keyboardController?.hide()
+                                }
                             }
                         }) {
                             Icon(
@@ -1872,5 +1880,7 @@ private fun AttachmentList(
         }
     }
 }
+
+
 
 
