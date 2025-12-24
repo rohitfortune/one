@@ -109,6 +109,8 @@ import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.hypot
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.ui.unit.Dp
 
 // --- New structured model for the editor ---
 
@@ -398,6 +400,9 @@ fun NoteScreen(
         historyVersion++ // Force recomposition so undo button updates
     }
 
+    var strokeColor by remember { mutableStateOf(Color.Black) }
+    var strokeWidthDp by remember { mutableStateOf(4f) } // float dp
+    var showStrokeSheet by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = Color.White,
         topBar = {
@@ -478,33 +483,59 @@ fun NoteScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         // Pen icon is the single toggle between TEXT and DRAW modes
-                        IconButton(onClick = {
-                            if (isEraserActive){
-                                // If eraser was active, turn it off and enter DRAW mode immediately
-                                isEraserActive = false
-                                editMode = EditMode.DRAW
-                                drawingState = drawingState.copy(isDrawing = true, currentStroke = null)
-                                focusManager.clearFocus(force = true)
-                                keyboardController?.hide()
-                            }else{
-                                val newMode = if (editMode == EditMode.TEXT) EditMode.DRAW else EditMode.TEXT
-                                editMode = newMode
-                                drawingState = drawingState.copy(
-                                    isDrawing = (newMode == EditMode.DRAW),
-                                    currentStroke = null
+                        Box(
+                            modifier = Modifier
+                                .padding(4.dp)
+                                .combinedClickable(
+                                    onClick = {
+                                        if (isEraserActive) {
+                                            isEraserActive = false
+                                            editMode = EditMode.DRAW
+                                            drawingState = drawingState.copy(isDrawing = true, currentStroke = null)
+                                            focusManager.clearFocus(force = true)
+                                            keyboardController?.hide()
+                                        } else {
+                                            val newMode = if (editMode == EditMode.TEXT) EditMode.DRAW else EditMode.TEXT
+                                            editMode = newMode
+                                            drawingState = drawingState.copy(
+                                                isDrawing = (newMode == EditMode.DRAW),
+                                                currentStroke = null
+                                            )
+                                            if (newMode == EditMode.DRAW) {
+                                                focusManager.clearFocus(force = true)
+                                                keyboardController?.hide()
+                                            }
+                                        }
+                                    },
+                                    onLongClick = {
+                                        showStrokeSheet = true
+                                    }
                                 )
-                                if (newMode == EditMode.DRAW) {
-                                    focusManager.clearFocus(force = true)
-                                    keyboardController?.hide()
-                                }
-                            }
-                        }) {
+                        ) {
                             Icon(
                                 Icons.Filled.Colorize,
                                 contentDescription = "Toggle Draw Mode",
                                 tint = if (editMode == EditMode.DRAW && !isEraserActive) Color.Black else Color.Gray
                             )
                         }
+
+                        // Show the modal bottom sheet when requested
+                        if (showStrokeSheet) {
+                            ModalBottomSheet(onDismissRequest = { showStrokeSheet = false }) {
+                                StrokeBottomSheet(
+                                    initialColor = strokeColor,
+                                    initialWidthDp = strokeWidthDp,
+                                    onColorSelected = { c ->
+                                        strokeColor = c
+                                    },
+                                    onWidthSelected = { w ->
+                                        strokeWidthDp = w
+                                    },
+                                    onDismissRequest = { showStrokeSheet = false }
+                                )
+                            }
+                        }
+
                         // Erase button: toggles eraser mode
                         IconButton(
                             onClick = {
@@ -953,6 +984,8 @@ fun NoteScreen(
                   blockHeights = blockHeights,
                   listState = listState,
                   blockStartIndex = if (attachments.isNotEmpty()) 1 else 0,
+                  strokeColor = strokeColor,                // named param
+                  strokeWidthDp = strokeWidthDp.dp,
                   onUpdateDrawingState = { transform ->
                       val prevStrokes = drawingState.strokes
                       val prevCount = prevStrokes.size
@@ -1395,6 +1428,8 @@ private fun DrawingOverlay(
     blockHeights: Map<Int, Float> = emptyMap(),
     listState: androidx.compose.foundation.lazy.LazyListState,
     blockStartIndex: Int,
+    strokeColor: Color,
+    strokeWidthDp: Dp,
     onUpdateDrawingState: ((DrawingState) -> DrawingState) -> Unit
 ) {
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -1556,7 +1591,7 @@ private fun DrawingOverlay(
 
     Canvas(modifier = modifier.then(inputModifier)) {
         // Draw all persisted strokes
-        val strokeWidth = 4.dp.toPx()
+        val strokeWidth = with(density) { strokeWidthDp.toPx() }
         val visibleBlockSetForDraw = listState.layoutInfo.visibleItemsInfo.map { it.index - blockStartIndex }.toSet()
         fun Note.Path.toPath(): Path {
              val p = Path()
@@ -1582,14 +1617,14 @@ private fun DrawingOverlay(
         drawingState.strokes.forEach { stroke ->
             drawPath(
                 path = stroke.toPath(),
-                color = Color.Black,
+                color = strokeColor,
                 style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
             )
         }
         drawingState.currentStroke?.let { stroke ->
             drawPath(
                 path = stroke.toPath(),
-                color = Color.Black,
+                color = strokeColor,
                 style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
             )
         }
