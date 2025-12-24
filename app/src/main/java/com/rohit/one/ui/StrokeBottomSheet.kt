@@ -60,7 +60,7 @@ fun StrokeBottomSheet(
                     .height(220.dp)
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(50.dp))
 
             Text("Width: ${widthDp.toInt()} dp", fontSize = 14.sp)
             Slider(

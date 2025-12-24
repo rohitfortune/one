@@ -1,7 +1,9 @@
+// kotlin
 package com.rohit.one.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -49,22 +51,12 @@ fun ColorPicker(
                     .fillMaxSize()
                     .background(brush = Brush.horizontalGradient(listOf(Color.White, hueColor)))
                     .pointerInput(hue) {
-                        detectDragGestures(
-                            onDragStart = { offset ->
-                                val x = offset.x.coerceIn(0f, w)
-                                val y = offset.y.coerceIn(0f, h)
-                                sat = (x / w).coerceIn(0f, 1f)
-                                value = (1f - (y / h)).coerceIn(0f, 1f)
-                            },
-                            onDrag = { change, _ ->
-                                val pos = change.position
-                                val x = pos.x.coerceIn(0f, w)
-                                val y = pos.y.coerceIn(0f, h)
-                                sat = (x / w).coerceIn(0f, 1f)
-                                value = (1f - (y / h)).coerceIn(0f, 1f)
-                                change.consumePositionChange()
-                            }
-                        )
+                        detectTapGestures { offset ->
+                            val x = offset.x.coerceIn(0f, w)
+                            val y = offset.y.coerceIn(0f, h)
+                            sat = (x / w).coerceIn(0f, 1f)
+                            value = (1f - (y / h)).coerceIn(0f, 1f)
+                        }
                     }
             ) {
                 Box(
