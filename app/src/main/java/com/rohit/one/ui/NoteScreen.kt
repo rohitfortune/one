@@ -84,6 +84,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.core.content.FileProvider
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -103,6 +104,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.rohit.one.data.Note
+import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.hypot
@@ -316,6 +318,45 @@ fun NoteScreen(
     }
 
     var focusedBlockIndex by remember { mutableIntStateOf(-1) }
+    // We'll derive block positions from the LazyListState.visibleItemsInfo — it's more reliable
+    val listState = rememberLazyListState()
+    val blockHeights = remember { mutableStateMapOf<Int, Float>() }
+
+    // Smooth block top changes to avoid sudden jumps when lazy list recycles/scrolls.
+    val smoothedBlockTops = remember { mutableStateMapOf<Int, Float>() }
+
+    // Launch a coroutine that watches for visible items and animates their offsets into smoothedBlockTops.
+    LaunchedEffect(listState, attachments, editorState.blocks) {
+        while (true) {
+            try {
+                val visible = listState.layoutInfo.visibleItemsInfo
+                Log.d("NoteScreen", "visibleItems: count=${visible.size} firstIndex=${visible.firstOrNull()?.index}")
+                val visibleMap = mutableMapOf<Int, Pair<Float, Float>>()
+                val blockStartIndex = if (attachments.isNotEmpty()) 1 else 0
+                val totalBlocks = editorState.blocks.size
+                for (info in visible) {
+                    val blockIndex = info.index - blockStartIndex
+                    if (blockIndex in 0 until totalBlocks) {
+                        // info.offset is the item's top relative to the LazyColumn viewport.
+                        // Our Canvas overlays the same area, so using info.offset directly
+                        // maps correctly into the Canvas local Y coordinates.
+                        visibleMap[blockIndex] = info.offset.toFloat() to info.size.toFloat()
+                    }
+                }
+                for ((blockIdx, pair) in visibleMap) {
+                    val (targetOffset, sizePx) = pair
+                    blockHeights[blockIdx] = sizePx
+                    // Write immediate top in local (container) coordinates so drawing uses same space.
+                    smoothedBlockTops[blockIdx] = targetOffset
+                    Log.d("NoteScreen", "smoothed top updated: idx=$blockIdx top=$targetOffset")
+                }
+             }
+             catch (_: Exception) {
+                 // ignore; layout info may not be ready yet
+             }
+             delay(40)
+         }
+     }
 
     val history = remember { BlockHistory().apply { push(editorState) } }
 
@@ -603,12 +644,7 @@ fun NoteScreen(
                 .background(Color.White)
         ) {
             // Main content: list of blocks
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Attachments header (new)
                 if (attachments.isNotEmpty()) {
                     item {
@@ -889,28 +925,24 @@ fun NoteScreen(
             // Always render drawing overlay so strokes stay visible in both modes,
             // but only capture pointer events when actually drawing.
             DrawingOverlay(
-                modifier = Modifier.fillMaxSize(),
-                drawingState = drawingState,
-                isInputEnabled = (drawingState.isDrawing && !isEraserActive) || isEraserActive,
-                isEraserActive = isEraserActive,
-                onUpdateDrawingState = { transform ->
-                    val prevStrokes = drawingState.strokes
-                    val prevCount = prevStrokes.size
-                    drawingState = transform(drawingState)
-                    val newStrokes = drawingState.strokes
-                    val newCount = newStrokes.size
-                    // Detect stroke add
-                    if (newCount > prevCount) {
-                        Log.d("BlockHistory", "pushHistory after drawing add: strokes=$newCount")
-                        pushHistory()
-                    }
-                    // Detect stroke erase
-                    if (newCount < prevCount) {
-                        Log.d("BlockHistory", "pushHistory after drawing erase: strokes=$newCount")
-                        pushHistory()
-                    }
-                }
-            )
+                  modifier = Modifier.fillMaxSize(),
+                  drawingState = drawingState,
+                  isInputEnabled = (drawingState.isDrawing && !isEraserActive) || isEraserActive,
+                  isEraserActive = isEraserActive,
+                  blockTops = smoothedBlockTops,
+                  blockHeights = blockHeights,
+                  listState = listState,
+                  blockStartIndex = if (attachments.isNotEmpty()) 1 else 0,
+                  onUpdateDrawingState = { transform ->
+                      val prevStrokes = drawingState.strokes
+                      val prevCount = prevStrokes.size
+                      drawingState = transform(drawingState)
+                      val newStrokes = drawingState.strokes
+                      val newCount = newStrokes.size
+                      if (newCount > prevCount) pushHistory()
+                      if (newCount < prevCount) pushHistory()
+                  }
+              )
         }
     }
 
@@ -1339,6 +1371,10 @@ private fun DrawingOverlay(
     drawingState: DrawingState,
     isInputEnabled: Boolean,
     isEraserActive: Boolean = false,
+    blockTops: Map<Int, Float> = emptyMap(),
+    blockHeights: Map<Int, Float> = emptyMap(),
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    blockStartIndex: Int,
     onUpdateDrawingState: ((DrawingState) -> DrawingState) -> Unit
 ) {
     val inputModifier = if (isInputEnabled) {
@@ -1355,10 +1391,15 @@ private fun DrawingOverlay(
                         // Erase logic: remove points close to the drag path
                         onUpdateDrawingState { state ->
                             val newStrokes = state.strokes.flatMap { stroke ->
+                                // For anchored strokes, compute screen Y per point
+                                val anchorIdx = stroke.anchorBlockIndex
+                                val anchorTop = anchorIdx?.let { blockTops[it] ?: stroke.anchorLocalTop } ?: 0f
                                 val filtered = stroke.points.filterNot { pt ->
-                                    val dx = pt.x - pos.x
-                                    val dy = pt.y - pos.y
-                                    hypot(dx.toDouble(), dy.toDouble()) < 16.0 // 16px threshold (was 32.0)
+                                    val sx = pt.x
+                                    val sy = if (anchorIdx != null) anchorTop + pt.y else pt.y
+                                    val dx = sx - pos.x
+                                    val dy = sy - pos.y
+                                    hypot(dx.toDouble(), dy.toDouble()) < 16.0
                                 }
                                 if (filtered.size >= 2) listOf(stroke.copy(points = filtered)) else emptyList()
                             }
@@ -1372,13 +1413,38 @@ private fun DrawingOverlay(
             Modifier.pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    // Start a new stroke with the initial down position
-                    var currentStroke = Note.Path(
-                        points = listOf(Note.Point(down.position.x, down.position.y))
-                    )
-                    onUpdateDrawingState { state ->
-                        state.copy(currentStroke = currentStroke)
+                    var anchorIndex: Int? = null
+                    var anchorTop = 0f
+                    // Prefer blockTops if available (smoothed data), otherwise fall back to listState info.
+                    for ((idx, top) in blockTops) {
+                        val h = blockHeights[idx] ?: 0f
+                        if (down.position.y >= top && down.position.y <= top + h) {
+                            anchorIndex = idx
+                            anchorTop = top
+                            break
+                        }
                     }
+                    if (anchorIndex == null) {
+                        // Look up visible items directly from listState
+                        val visibleInfos = listState.layoutInfo.visibleItemsInfo
+                        val nearestInfo = visibleInfos.minByOrNull { info ->
+                            val itemCenter = info.offset + info.size / 2f
+                            kotlin.math.abs(down.position.y - itemCenter)
+                        }
+                        if (nearestInfo != null) {
+                            anchorIndex = nearestInfo.index - blockStartIndex
+                            anchorTop = nearestInfo.offset.toFloat()
+                        }
+                    }
+
+                    val initialY = if (anchorIndex != null) down.position.y - anchorTop else down.position.y
+                    var currentStroke = Note.Path(
+                        points = listOf(Note.Point(down.position.x, initialY)),
+                        anchorBlockIndex = anchorIndex,
+                        anchorLocalTop = if (anchorIndex != null) initialY else null
+                    )
+                    onUpdateDrawingState { state -> state.copy(currentStroke = currentStroke) }
+
                     while (true) {
                         val event = awaitPointerEvent()
                         val pointer = event.changes.firstOrNull { it.id == down.id }
@@ -1386,27 +1452,19 @@ private fun DrawingOverlay(
                             break
                         }
                         val pos = pointer.position
-                        // Append new point by creating a new list (Note.Path.points is immutable)
-                        currentStroke = currentStroke.copy(
-                            points = currentStroke.points + Note.Point(pos.x, pos.y)
-                        )
-                        onUpdateDrawingState { state ->
-                            state.copy(currentStroke = currentStroke)
-                        }
+                        val addY = if (anchorIndex != null) pos.y - (blockTops[anchorIndex] ?: anchorTop) else pos.y
+                        val addPoint = Note.Point(pos.x, addY)
+                        currentStroke = currentStroke.copy(points = currentStroke.points + addPoint)
+                        onUpdateDrawingState { state -> state.copy(currentStroke = currentStroke) }
                         pointer.consume()
                     }
                     val finishedStroke = currentStroke
                     if (finishedStroke.points.size > 1) {
                         onUpdateDrawingState { state ->
-                            state.copy(
-                                strokes = state.strokes + finishedStroke,
-                                currentStroke = null
-                            )
+                            state.copy(strokes = state.strokes + finishedStroke, currentStroke = null)
                         }
                     } else {
-                        onUpdateDrawingState { state ->
-                            state.copy(currentStroke = null)
-                        }
+                        onUpdateDrawingState { state -> state.copy(currentStroke = null) }
                     }
                 }
             }
@@ -1417,32 +1475,47 @@ private fun DrawingOverlay(
     Canvas(modifier = modifier.then(inputModifier)) {
         // Draw all persisted strokes
         val strokeWidth = 4.dp.toPx()
-        fun Note.Path.toPath(): Path {
-            val p = Path()
-            val pts = points
-            if (pts.isEmpty()) return p
-            p.moveTo(pts[0].x, pts[0].y)
-            for (i in 1 until pts.size) {
-                p.lineTo(pts[i].x, pts[i].y)
-            }
-            return p
-        }
+        fun Note.Path.toPath(blockTopsMap: Map<Int, Float>): Path {
+             val p = Path()
+             val pts = points
+             if (pts.isEmpty()) return p
+             val anchorIdx = anchorBlockIndex
+             var anchorTop = anchorIdx?.let { blockTopsMap[it] ?: anchorLocalTop } ?: 0f
+             if (anchorIdx != null && anchorTop == anchorLocalTop) {
+                // blockTopsMap didn't have this index; try to read current visible item offset
+                val info = listState.layoutInfo.visibleItemsInfo.find { it.index - blockStartIndex == anchorIdx }
+                if (info != null) anchorTop = info.offset.toFloat()
+             }
+             if (anchorIdx != null) {
+                 Log.d("NoteScreen", "drawing stroke anchored idx=$anchorIdx anchorTop=$anchorTop pts=${pts.size}")
+             }
+             val firstY = if (anchorIdx != null) anchorTop + pts[0].y else pts[0].y
+             p.moveTo(pts[0].x, firstY)
+             for (i in 1 until pts.size) {
+                val pt = pts[i]
+                val y = if (anchorIdx != null) anchorTop + pt.y else pt.y
+                p.lineTo(pt.x, y)
+             }
+             return p
+         }
         drawingState.strokes.forEach { stroke ->
             drawPath(
-                path = stroke.toPath(),
+                path = stroke.toPath(blockTops),
                 color = Color.Black,
                 style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
             )
         }
         drawingState.currentStroke?.let { stroke ->
             drawPath(
-                path = stroke.toPath(),
+                path = stroke.toPath(blockTops),
                 color = Color.Black,
                 style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
             )
         }
     }
 }
+
+// ...existing code...
 
 private fun parseMarkdownToBlocks(markdown: String): List<NoteBlock> {
     if (markdown.isBlank()) return listOf(NoteBlock.Paragraph(""))
@@ -1725,3 +1798,6 @@ private fun AttachmentList(
         } // end Column
     } // end AttachmentList
 }
+
+
+

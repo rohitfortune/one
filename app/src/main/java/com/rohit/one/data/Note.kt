@@ -21,7 +21,10 @@ data class Note(
     )
 
     data class Path(
-        val points: List<Point>
+        val points: List<Point>,
+        val anchorBlockIndex: Int? = null,
+        val anchorLocalTop: Float? = null,
+        val anchorCreatedTop: Float? = null
     )
 
     data class Point(
