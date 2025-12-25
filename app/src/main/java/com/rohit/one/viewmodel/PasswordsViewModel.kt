@@ -24,6 +24,13 @@ class VaultsViewModel(
     val cards: StateFlow<List<CreditCard>> = cardRepository.getAllCards().map { it.toList() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private val _selectedTab = kotlinx.coroutines.flow.MutableStateFlow(0)
+    val selectedTab: StateFlow<Int> = _selectedTab
+
+    fun onTabSelected(index: Int) {
+        _selectedTab.value = index
+    }
+
     fun addPassword(title: String, username: String, rawPassword: String) {
         viewModelScope.launch { passwordRepository.addPassword(title, username, rawPassword) }
     }

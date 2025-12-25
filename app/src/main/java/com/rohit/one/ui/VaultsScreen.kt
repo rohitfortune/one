@@ -51,8 +51,7 @@ fun VaultsScreen(
 ) {
     val passwords by vaultsViewModel.passwords.collectAsState(initial = emptyList())
     val cards by vaultsViewModel.cards.collectAsState(initial = emptyList())
-
-    var selectedTab by remember { mutableStateOf(0) } // 0 = Passwords, 1 = Cards
+    val selectedTab by vaultsViewModel.selectedTab.collectAsState()
 
     Scaffold(
         modifier = modifier,
@@ -68,10 +67,10 @@ fun VaultsScreen(
         Column(modifier = Modifier.padding(innerPadding)) {
             Column(modifier = Modifier.padding(16.dp)) {
                 PrimaryTabRow(selectedTabIndex = selectedTab) {
-                    Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }) {
+                    Tab(selected = selectedTab == 0, onClick = { vaultsViewModel.onTabSelected(0) }) {
                         Text("Passwords", modifier = Modifier.padding(12.dp))
                     }
-                    Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }) {
+                    Tab(selected = selectedTab == 1, onClick = { vaultsViewModel.onTabSelected(1) }) {
                         Text("Cards", modifier = Modifier.padding(12.dp))
                     }
                 }
@@ -83,7 +82,7 @@ fun VaultsScreen(
                     selectedTab = selectedTab,
                     onPasswordClick = onPasswordClick,
                     onCardClick = onCardClick,
-                    onTabChanged = { newTab -> selectedTab = newTab },
+                    onTabChanged = { newTab -> vaultsViewModel.onTabSelected(newTab) },
                     modifier = Modifier.padding(top = 8.dp)
                 )
             }
@@ -131,9 +130,11 @@ fun VaultsContent(
             }
     ) {
         if (selectedTab == 0) {
-            LazyColumn(
-                modifier = Modifier.padding(top = 0.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 160.dp),
+                contentPadding = PaddingValues(top = 0.dp, bottom = 88.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(passwords) { password ->
                     PasswordListItem(password, onClick = { onPasswordClick(password) })
@@ -142,7 +143,7 @@ fun VaultsContent(
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 160.dp),
-                contentPadding = PaddingValues(top = 0.dp, bottom = 8.dp),
+                contentPadding = PaddingValues(top = 0.dp, bottom = 88.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
