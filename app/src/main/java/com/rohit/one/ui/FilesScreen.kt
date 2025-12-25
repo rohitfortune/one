@@ -16,7 +16,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun FilesScreen(modifier: Modifier = Modifier) {
+fun FilesScreen(
+    modifier: Modifier = Modifier,
+    onSignIn: () -> Unit,
+    signedInAccount: String?
+) {
     val current = remember { mutableStateOf<FilesRoute>(FilesRoute.Menu) }
 
     when (current.value) {
@@ -60,7 +64,11 @@ fun FilesScreen(modifier: Modifier = Modifier) {
         }
 
         FilesRoute.Local -> LocalFilesScreen(onBack = { current.value = FilesRoute.Menu })
-        FilesRoute.GoogleDrive -> DriveFilesScreen(onBack = { current.value = FilesRoute.Menu })
+        FilesRoute.GoogleDrive -> DriveFilesScreen(
+            onBack = { current.value = FilesRoute.Menu },
+            onSignIn = onSignIn,
+            signedInAccount = signedInAccount
+        )
         FilesRoute.OneDrive -> OneDriveFilesScreen(onBack = { current.value = FilesRoute.Menu })
     }
 }

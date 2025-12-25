@@ -339,10 +339,12 @@ class MainActivity : FragmentActivity() {
             val authReqBuilder = com.google.android.gms.auth.api.identity.AuthorizationRequest.builder()
             try {
                 val scope = com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/drive.appdata")
+                val scopeFull = com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/drive")
                 // AuthorizationRequest.Builder may expose addScope on some versions; call it reflectively to stay binary compatible
                 try {
                     val addScopeMethod = authReqBuilder.javaClass.methods.firstOrNull { it.name == "addScope" && it.parameterTypes.size == 1 }
                     addScopeMethod?.invoke(authReqBuilder, scope)
+                    addScopeMethod?.invoke(authReqBuilder, scopeFull)
                 } catch (_: Throwable) {
                     // If addScope not available or reflection fails, ignore — some older versions may require different API
                 }
@@ -453,8 +455,11 @@ class MainActivity : FragmentActivity() {
                 com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN
             ).requestEmail()
             try {
-                gsoBuilder.requestScopes(com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/drive.appdata"))
-                Log.d("OneApp","trySignInClientFallback: requested Drive appdata scope")
+                gsoBuilder.requestScopes(
+                    com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/drive.appdata"),
+                    com.google.android.gms.common.api.Scope("https://www.googleapis.com/auth/drive")
+                )
+                Log.d("OneApp","trySignInClientFallback: requested Drive appdata and full Drive scopes")
             } catch (ex: Exception) {
                 Log.w("OneApp","trySignInClientFallback: failed to add scope: ${ex.message}")
             }
@@ -816,7 +821,11 @@ fun MainScreen(
                         signedInUsername = signedInAccount,
                         onSignOut = if (onSignOut != null) { { onSignOut() } } else null
                     )
-                    AppDestinations.FILES -> FilesScreen(modifier = Modifier.padding(innerPadding))
+                    AppDestinations.FILES -> FilesScreen(
+                        modifier = Modifier.padding(innerPadding),
+                        onSignIn = onSignIn,
+                        signedInAccount = signedInAccount
+                    )
                     AppDestinations.SETTINGS -> BackupScreen(
                         modifier = Modifier.padding(innerPadding),
                         backupRepository = backupRepository,

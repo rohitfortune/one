@@ -122,7 +122,7 @@ object IdentityAuthProvider {
                     refreshScope.launch {
                         try {
                             if (!accountName.isNullOrBlank()) {
-                                val scope = "oauth2:https://www.googleapis.com/auth/drive.appdata"
+                                val scope = "oauth2:https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.appdata"
                                 // Deprecated: migrate to AuthorizationClient
                                 val newToken = GoogleAuthUtil.getToken(context, accountName, scope)
                                 if (newToken.isNotEmpty()) {
@@ -148,7 +148,7 @@ object IdentityAuthProvider {
         try {
             return withContext(Dispatchers.IO) {
                 try {
-                    val scope = "oauth2:https://www.googleapis.com/auth/drive.appdata"
+                    val scope = "oauth2:https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.appdata"
                     // Deprecated: migrate to AuthorizationClient
                     val token = GoogleAuthUtil.getToken(context, accountName, scope)
                     if (token.isNotEmpty()) {
