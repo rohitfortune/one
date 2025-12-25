@@ -2,6 +2,7 @@
 package com.rohit.one.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -105,22 +106,26 @@ fun AddEditCardScreen(
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
-            TextField(
+            OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
                 label = { Text("Cardholder name") },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
             )
-            TextField(
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
                 value = nickname,
                 onValueChange = { nickname = it },
                 label = { Text("Card nickname (optional)") },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
             )
-            TextField(
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
                 value = if (revealed) number else "",
                 onValueChange = { input ->
-                    if (!revealed) return@TextField
+                    if (!revealed) return@OutlinedTextField
                     // Filter to digits only and limit to 16 digits
                     val digits = input.filter { it.isDigit() }.take(16)
                     number = digits
@@ -129,13 +134,15 @@ fun AddEditCardScreen(
                     val mask = if (card != null && card.last4.isNotEmpty()) "(**** **** **** ${card.last4})" else ""
                     Text(text = listOf("Card number", mask).filter { it.isNotBlank() }.joinToString(" "))
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
             )
+            Spacer(modifier = Modifier.height(16.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
-                TextField(
+                OutlinedTextField(
                     value = if (revealed) expiryTextField else TextFieldValue(if (expiryDigits.isNotBlank()) "**/**" else ""),
                     onValueChange = { tfv: TextFieldValue ->
-                        if (!revealed) return@TextField
+                        if (!revealed) return@OutlinedTextField
 
                         val isAtEnd = tfv.selection.end == tfv.text.length
                         val onlyDigits = tfv.text.filter { it.isDigit() }
@@ -154,17 +161,19 @@ fun AddEditCardScreen(
                     label = { Text("Expiry date (MM/YY)") },
                     modifier = Modifier
                         .weight(1f)
-                        .padding(end = 8.dp)
+                        .padding(end = 8.dp),
+                    shape = RoundedCornerShape(12.dp)
                 )
-                TextField(
+                OutlinedTextField(
                     value = if (revealed) securityCode else if (securityCode.isNotBlank()) "****" else "",
                     onValueChange = { raw ->
-                        if (!revealed) return@TextField
+                        if (!revealed) return@OutlinedTextField
                         // Allow only digits and limit to 4 characters
                         securityCode = raw.filter { it.isDigit() }.take(4)
                     },
                     label = { Text("Security code") },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
                 )
             }
 
