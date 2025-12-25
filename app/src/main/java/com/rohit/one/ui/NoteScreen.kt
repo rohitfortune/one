@@ -1,5 +1,6 @@
 package com.rohit.one.ui
 
+
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
@@ -401,19 +402,20 @@ fun NoteScreen(
         historyVersion++ // Force recomposition so undo button updates
     }
 
-    var strokeColor by remember { mutableStateOf(Color.Black) }
+    val currentOnSurface = MaterialTheme.colorScheme.onSurface
+    var strokeColor by remember { mutableStateOf(currentOnSurface) }
     var strokeWidthDp by remember { mutableStateOf(4f) } // float dp
     var showStrokeSheet by remember { mutableStateOf(false) }
     Scaffold(
-        containerColor = Color.White,
+        containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
             Column {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.White,
-                        titleContentColor = Color.Black,
-                        actionIconContentColor = Color.Black,
-                        navigationIconContentColor = Color.Black
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        actionIconContentColor = MaterialTheme.colorScheme.onSurface,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onSurface
                     ),
                     title = {
                         TextField(
@@ -423,15 +425,15 @@ fun NoteScreen(
                                     editorState = editorState.copy(title = it)
                                 }
                             },
-                            placeholder = { Text("Title", color = Color.Gray) },
+                            placeholder = { Text("Title", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                             colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Color.White,
-                                unfocusedContainerColor = Color.White,
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
                                 focusedIndicatorColor = Color.Transparent,
                                 unfocusedIndicatorColor = Color.Transparent,
-                                cursorColor = Color.Black,
-                                focusedTextColor = Color.Black,
-                                unfocusedTextColor = Color.Black,
+                                cursorColor = MaterialTheme.colorScheme.onSurface,
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                             ),
                             textStyle = MaterialTheme.typography.titleLarge,
                             singleLine = true,
@@ -478,7 +480,7 @@ fun NoteScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color.White)
+                            .background(MaterialTheme.colorScheme.surface)
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                         horizontalArrangement = Arrangement.SpaceAround,
                         verticalAlignment = Alignment.CenterVertically
@@ -522,7 +524,7 @@ fun NoteScreen(
                             Icon(
                                 Icons.Filled.Colorize,
                                 contentDescription = "Toggle Draw Mode",
-                                tint = if (editMode == EditMode.DRAW && !isEraserActive) Color.Black else Color.Gray
+                                tint = if (editMode == EditMode.DRAW && !isEraserActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
@@ -558,13 +560,13 @@ fun NoteScreen(
                             Icon(
                                 Icons.Filled.RemoveCircleOutline,
                                 contentDescription = "Eraser Mode",
-                                tint = if (isEraserActive) Color.Black else Color.LightGray
+                                tint = if (isEraserActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant
                             )
                         }
 
                         // Attach file button (new)
                         IconButton(onClick = { pickLauncher.launch(arrayOf("*/*")) }) {
-                            Icon(Icons.Filled.AttachFile, contentDescription = "Attach File", tint = Color.Black)
+                            Icon(Icons.Filled.AttachFile, contentDescription = "Attach File", tint = MaterialTheme.colorScheme.onSurface)
                         }
 
                         IconButton(onClick = {
@@ -581,7 +583,7 @@ fun NoteScreen(
                             Icon(
                                 Icons.AutoMirrored.Filled.Undo,
                                 contentDescription = "Undo",
-                                tint = if (history.canUndo()) Color.Black else Color.Gray
+                                tint = if (history.canUndo()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         IconButton(onClick = {
@@ -596,13 +598,13 @@ fun NoteScreen(
                             Icon(
                                 Icons.AutoMirrored.Filled.Redo,
                                 contentDescription = "Redo",
-                                tint = if (history.canRedo()) Color.Black else Color.Gray
+                                tint = if (history.canRedo()) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 }
 
-                HorizontalDivider(color = Color.LightGray)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         },
         bottomBar = {
@@ -689,7 +691,7 @@ fun NoteScreen(
             modifier = Modifier
                 .padding(innerPadding)
                 .fillMaxSize()
-                .background(Color.White)
+                .background(MaterialTheme.colorScheme.surface)
         ) {
             // Main content: list of blocks
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1120,13 +1122,13 @@ private fun ParagraphBlock(
         modifier = Modifier
             .fillMaxWidth()
             .onFocusChanged { if (it.isFocused) onFocused() },
-        textStyle = TextStyle(fontSize = 16.sp, color = Color.Black),
+        textStyle = TextStyle(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface),
         keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Default),
         visualTransformation = styledVisualTransformation(spans),
         decorationBox = { innerTextField ->
             Box {
                 if (value.text.isEmpty()) {
-                    Text("Note content…", color = Color.Gray)
+                    Text("Note content…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 innerTextField()
             }
@@ -1230,7 +1232,7 @@ private fun ChecklistBlock(
                 .onFocusChanged { if (it.isFocused) onFocused() },
             textStyle = TextStyle(
                 fontSize = 16.sp,
-                color = Color.Black,
+                color = MaterialTheme.colorScheme.onSurface,
                 textDecoration = if (item.checked) TextDecoration.LineThrough else TextDecoration.None
             ),
             keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Default)
@@ -1303,7 +1305,7 @@ private fun BulletBlock(
                 .weight(1f)
                 .focusRequester(focusRequester)
                 .onFocusChanged { if (it.isFocused) onFocused() },
-            textStyle = TextStyle(fontSize = 16.sp, color = Color.Black),
+            textStyle = TextStyle(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface),
             keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Default)
         )
     }
@@ -1373,7 +1375,7 @@ private fun NumberedBlock(
                 .weight(1f)
                 .focusRequester(focusRequester)
                 .onFocusChanged { if (it.isFocused) onFocused() },
-            textStyle = TextStyle(fontSize = 16.sp, color = Color.Black),
+            textStyle = TextStyle(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface),
             keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Default)
         )
     }
@@ -1395,32 +1397,32 @@ private fun BottomFormattingBar(
             // move up together with the on‑screen keyboard (IME).
             .imePadding()
             .navigationBarsPadding()
-            .background(Color(0xFFF5F1FF))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
             .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceAround,
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onChecklist) {
-            Icon(Icons.Filled.Checklist, contentDescription = "Checklist", tint = Color.Black)
+            Icon(Icons.Filled.Checklist, contentDescription = "Checklist", tint = MaterialTheme.colorScheme.onSurface)
         }
         IconButton(onClick = onBulletList) {
             Icon(
                 Icons.AutoMirrored.Filled.FormatListBulleted,
                 contentDescription = "Bulleted List",
-                tint = Color.Black
+                tint = MaterialTheme.colorScheme.onSurface
             )
         }
         IconButton(onClick = onNumberedList) {
-            Icon(Icons.Filled.FormatListNumbered, contentDescription = "Numbered List", tint = Color.Black)
+            Icon(Icons.Filled.FormatListNumbered, contentDescription = "Numbered List", tint = MaterialTheme.colorScheme.onSurface)
         }
         IconButton(onClick = onBold) {
-            Icon(Icons.Filled.FormatBold, contentDescription = "Bold", tint = Color.Black)
+            Icon(Icons.Filled.FormatBold, contentDescription = "Bold", tint = MaterialTheme.colorScheme.onSurface)
         }
         IconButton(onClick = onItalic) {
-            Icon(Icons.Filled.FormatItalic, contentDescription = "Italic", tint = Color.Black)
+            Icon(Icons.Filled.FormatItalic, contentDescription = "Italic", tint = MaterialTheme.colorScheme.onSurface)
         }
         IconButton(onClick = onUnderline) {
-            Icon(Icons.Filled.FormatUnderlined, contentDescription = "Underline", tint = Color.Black)
+            Icon(Icons.Filled.FormatUnderlined, contentDescription = "Underline", tint = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
@@ -1802,7 +1804,7 @@ private fun AttachmentList(
      }
 
     Column {
-        Text(text = "Attachments", color = Color.DarkGray)
+        Text(text = "Attachments", color = MaterialTheme.colorScheme.onSurfaceVariant)
         for (att in attachments) {
             val rowModifier = Modifier
                 .fillMaxWidth()
