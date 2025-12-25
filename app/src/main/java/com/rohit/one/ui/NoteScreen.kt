@@ -521,10 +521,13 @@ fun NoteScreen(
                                     }
                                 )
                         ) {
+                            // Make the icon look visually disabled when not in draw mode by lowering the alpha.
+                            val drawEnabled = (editMode == EditMode.DRAW && !isEraserActive)
+                            val disabledAlpha = 0.38f
                             Icon(
                                 Icons.Filled.Colorize,
                                 contentDescription = "Toggle Draw Mode",
-                                tint = if (editMode == EditMode.DRAW && !isEraserActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = if (drawEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = disabledAlpha)
                             )
                         }
 
