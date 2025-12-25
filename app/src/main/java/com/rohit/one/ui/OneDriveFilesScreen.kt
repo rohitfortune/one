@@ -1,6 +1,22 @@
 package com.rohit.one.ui
 
 import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material3.FloatingActionButton
+import androidx.core.content.FileProvider
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.asRequestBody
+import java.io.File
+import java.io.FileOutputStream
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -107,6 +123,37 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
     var viewMode by remember { mutableStateOf(OneDriveViewMode.List) }
     var sortOrder by remember { mutableStateOf(OneDriveSortOrder.Name) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var refreshTrigger by remember { mutableStateOf(0) }
+
+    // Upload Launcher
+    val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let {
+            val contentResolver = context.contentResolver
+            val type = contentResolver.getType(uri) ?: "application/octet-stream"
+            val name = androidx.documentfile.provider.DocumentFile.fromSingleUri(context, uri)?.name ?: "upload"
+            
+            kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+                 try {
+                     val inputStream = contentResolver.openInputStream(uri)
+                     val tempFile = File(context.cacheDir, name)
+                     val outputStream = FileOutputStream(tempFile)
+                     inputStream?.copyTo(outputStream)
+                     inputStream?.close()
+                     outputStream.close()
+                     
+                     uploadFileToOneDrive(accessToken!!, folderStack.last().id, tempFile, type)
+                     withContext(Dispatchers.Main) {
+                         Toast.makeText(context, "Upload complete", Toast.LENGTH_SHORT).show()
+                         refreshTrigger++
+                     }
+                 } catch (e: Exception) {
+                     withContext(Dispatchers.Main) {
+                         Toast.makeText(context, "Upload failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                     }
+                 }
+            }
+        }
+    }
 
     // Init Auth
     LaunchedEffect(Unit) {
@@ -128,7 +175,7 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
 
     // Fetch Files
     val currentFolder = folderStack.last()
-    LaunchedEffect(accessToken, currentFolder, sortOrder) {
+    LaunchedEffect(accessToken, currentFolder, sortOrder, refreshTrigger) {
         if (accessToken == null) return@LaunchedEffect
         isLoading = true
         error = null
@@ -163,10 +210,6 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
             Button(onClick = {
                 activity?.let {
                     kotlinx.coroutines.MainScope().launch(Dispatchers.Main) { 
-                        // Using MainScope just to launch, ideally should use rememberCoroutineScope 
-                        // but logic inside clickable usually fine. 
-                        // Actually, let's use a side-effect or similar.
-                        // For simplicity in onClick:
                         val res = MsGraphAuthProvider.signIn(it)
                         if (res != null) {
                             isSignedIn = true
@@ -212,6 +255,9 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { uploadLauncher.launch("*/*") }) {
+                        Icon(imageVector = Icons.Rounded.Add, contentDescription = "Upload File")
+                    }
                     IconButton(onClick = { viewMode = if (viewMode == OneDriveViewMode.List) OneDriveViewMode.Grid else OneDriveViewMode.List }) {
                         Icon(
                             imageVector = if (viewMode == OneDriveViewMode.List) Icons.Rounded.GridView else Icons.Rounded.ViewList,
@@ -234,7 +280,6 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
                             }
                         }
                     }
-                    // Sign out option
                      IconButton(onClick = {
                         kotlinx.coroutines.MainScope().launch(Dispatchers.Main) {
                             if (MsGraphAuthProvider.signOut()) {
@@ -244,9 +289,7 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
                             }
                         }
                     }) {
-                        // Using a different icon or overflow menu would be better, but quick SignOut button:
-                        // Icon(Icons.Rounded.ExitToApp, "Sign Out") // Icon might not exist in this set
-                        Text("LO", style = MaterialTheme.typography.labelSmall) // Placeholder
+                        Text("LO", style = MaterialTheme.typography.labelSmall)
                     }
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
@@ -308,9 +351,11 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
                                 if (file.isDirectory) {
                                     folderStack = folderStack + file
                                 } else {
-                                    // TODO: Open handling
+                                    openOneDriveFile(context, accessToken!!, file)
                                 }
-                            }
+                            },
+                             onDownload = { downloadOneDriveFile(context, accessToken!!, file) },
+                             onShare = { shareOneDriveFile(context, accessToken!!, file) }
                         )
                      }
                  }
@@ -325,9 +370,12 @@ private fun OneDriveFileItem(
     file: OneDriveFile,
     viewMode: OneDriveViewMode,
     accessToken: String?,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDownload: () -> Unit,
+    onShare: () -> Unit
 ) {
     val context = LocalContext.current
+    var showMenu by remember { mutableStateOf(false) }
     val formattedDate = remember(file.modifiedTime) {
         SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(file.modifiedTime))
     }
@@ -350,28 +398,64 @@ private fun OneDriveFileItem(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                       text = formattedDate,
+                        text = formattedDate,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                Box {
+                    if (!file.isDirectory) {
+                        IconButton(onClick = { showMenu = true }) { Icon(Icons.Rounded.MoreVert, "More") }
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Download") },
+                                leadingIcon = { Icon(Icons.Rounded.Download, null) },
+                                onClick = { showMenu = false; onDownload() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Share") },
+                                leadingIcon = { Icon(Icons.Rounded.Share, null) },
+                                onClick = { showMenu = false; onShare() }
+                            )
+                        }
+                    }
+                }
             }
         } else {
-             Column(
-                modifier = Modifier.fillMaxSize().padding(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                OneDriveThumbnail(file, 64.dp, accessToken)
-                Spacer(modifier = Modifier.height(8.dp))
-                 Text(
-                    text = file.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
-            }
+             Box {
+                 Column(
+                    modifier = Modifier.fillMaxSize().padding(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    OneDriveThumbnail(file, 64.dp, accessToken)
+                    Spacer(modifier = Modifier.height(8.dp))
+                     Text(
+                        text = file.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+                if (!file.isDirectory) {
+                    Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                        IconButton(onClick = { showMenu = true }) { Icon(Icons.Rounded.MoreVert, "More") }
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Download") },
+                                leadingIcon = { Icon(Icons.Rounded.Download, null) },
+                                onClick = { showMenu = false; onDownload() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Share") },
+                                leadingIcon = { Icon(Icons.Rounded.Share, null) },
+                                onClick = { showMenu = false; onShare() }
+                            )
+                        }
+                    }
+                }
+             }
         }
     }
 
@@ -503,4 +587,113 @@ private suspend fun listOneDriveFiles(accessToken: String, folderId: String, sor
     }
 }
 
-// Needed to run coroutine in onClick
+
+
+private fun openOneDriveFile(context: Context, accessToken: String, file: OneDriveFile) {
+    Toast.makeText(context, "Opening...", Toast.LENGTH_SHORT).show()
+    kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+        val cachedFile = downloadOneDriveFileToCache(context, accessToken, file)
+        withContext(Dispatchers.Main) {
+            if (cachedFile != null) {
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cachedFile)
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, file.mimeType ?: "application/octet-stream")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(context, "No app found to open this file", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Toast.makeText(context, "Failed to download", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
+
+private fun downloadOneDriveFile(context: Context, accessToken: String, file: OneDriveFile) {
+     Toast.makeText(context, "Downloading...", Toast.LENGTH_SHORT).show()
+     kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+         try {
+             val client = OkHttpClient()
+             val request = Request.Builder().url("https://graph.microsoft.com/v1.0/me/drive/items/${file.id}/content").addHeader("Authorization", "Bearer $accessToken").build()
+             val response = client.newCall(request).execute()
+             if (response.isSuccessful) {
+                 val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                 val destFile = java.io.File(downloadsDir, file.name)
+                 val fos = java.io.FileOutputStream(destFile)
+                 response.body?.byteStream()?.copyTo(fos)
+                 fos.close()
+                 withContext(Dispatchers.Main) { Toast.makeText(context, "Saved to Downloads", Toast.LENGTH_SHORT).show() }
+             } else {
+                 withContext(Dispatchers.Main) { Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show() }
+             }
+         } catch (e: Exception) {
+             withContext(Dispatchers.Main) { Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show() }
+         }
+     }
+}
+
+private fun shareOneDriveFile(context: Context, accessToken: String, file: OneDriveFile) {
+    Toast.makeText(context, "Preparing share...", Toast.LENGTH_SHORT).show()
+    kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+        val cachedFile = downloadOneDriveFileToCache(context, accessToken, file)
+        withContext(Dispatchers.Main) {
+            if (cachedFile != null) {
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cachedFile)
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    setType(file.mimeType ?: "application/octet-stream")
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(intent, "Share file"))
+            } else {
+                Toast.makeText(context, "Failed to share", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
+
+private fun downloadOneDriveFileToCache(context: Context, accessToken: String, file: OneDriveFile): java.io.File? {
+     try {
+         val client = OkHttpClient()
+         val request = Request.Builder().url("https://graph.microsoft.com/v1.0/me/drive/items/${file.id}/content").addHeader("Authorization", "Bearer $accessToken").build()
+         val response = client.newCall(request).execute()
+         if (response.isSuccessful) {
+             val destFile = java.io.File(context.cacheDir, file.name)
+             val fos = java.io.FileOutputStream(destFile)
+             response.body?.byteStream()?.copyTo(fos)
+             fos.close()
+             return destFile
+         }
+     } catch (e: Exception) {
+         e.printStackTrace()
+     }
+     return null
+}
+
+private suspend fun uploadFileToOneDrive(accessToken: String, folderId: String, file: java.io.File, mimeType: String) = withContext(Dispatchers.IO) {
+    val client = OkHttpClient()
+    
+    // For small files (< 4MB), use PUT /me/drive/items/{parent-id}:/{filename}:/content
+    val endpoint = if (folderId == "root") {
+        "https://graph.microsoft.com/v1.0/me/drive/root:/${file.name}:/content"
+    } else {
+        "https://graph.microsoft.com/v1.0/me/drive/items/$folderId:/${file.name}:/content"
+    }
+    
+    val requestBody = file.asRequestBody(mimeType.toMediaTypeOrNull())
+    
+    val request = Request.Builder()
+        .url(endpoint)
+        .addHeader("Authorization", "Bearer $accessToken")
+        .put(requestBody)
+        .build()
+        
+    val response = client.newCall(request).execute()
+    if (!response.isSuccessful) {
+        val body = response.body?.string()
+        throw Exception("Upload failed: ${response.code} $body")
+    }
+}

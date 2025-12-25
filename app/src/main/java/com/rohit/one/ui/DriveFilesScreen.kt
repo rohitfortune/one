@@ -1,5 +1,25 @@
+
 package com.rohit.one.ui
 
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material3.FloatingActionButton
+import androidx.core.content.FileProvider
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
+import java.io.File
+import java.io.FileOutputStream
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -124,6 +144,37 @@ fun DriveFilesScreen(
     var viewMode by remember { mutableStateOf(DriveViewMode.List) }
     var sortOrder by remember { mutableStateOf(DriveSortOrder.Name) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var refreshTrigger by remember { mutableStateOf(0) }
+
+    // Upload Launcher
+    val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let {
+            val contentResolver = context.contentResolver
+            val type = contentResolver.getType(uri) ?: "application/octet-stream"
+            val name = androidx.documentfile.provider.DocumentFile.fromSingleUri(context, uri)?.name ?: "upload"
+            
+            kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+                 try {
+                     val inputStream = contentResolver.openInputStream(uri)
+                     val tempFile = File(context.cacheDir, name)
+                     val outputStream = FileOutputStream(tempFile)
+                     inputStream?.copyTo(outputStream)
+                     inputStream?.close()
+                     outputStream.close()
+                     
+                     uploadFileToDrive(accessToken!!, folderStack.last().id, tempFile, type)
+                     withContext(Dispatchers.Main) {
+                         Toast.makeText(context, "Upload complete", Toast.LENGTH_SHORT).show()
+                         refreshTrigger++
+                     }
+                 } catch (e: Exception) {
+                     withContext(Dispatchers.Main) {
+                         Toast.makeText(context, "Upload failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                     }
+                 }
+            }
+        }
+    }
 
     // Fetch Token
     LaunchedEffect(signedInAccount) {
@@ -142,7 +193,7 @@ fun DriveFilesScreen(
 
     // Fetch Files
     val currentFolder = folderStack.last()
-    LaunchedEffect(accessToken, currentFolder, sortOrder) {
+    LaunchedEffect(accessToken, currentFolder, sortOrder, refreshTrigger) {
         if (accessToken == null) return@LaunchedEffect
         isLoading = true
         error = null
@@ -171,6 +222,9 @@ fun DriveFilesScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { uploadLauncher.launch("*/*") }) {
+                        Icon(imageVector = Icons.Rounded.Add, contentDescription = "Upload File")
+                    }
                     IconButton(onClick = { viewMode = if (viewMode == DriveViewMode.List) DriveViewMode.Grid else DriveViewMode.List }) {
                         Icon(
                             imageVector = if (viewMode == DriveViewMode.List) Icons.Rounded.GridView else Icons.Rounded.ViewList,
@@ -253,9 +307,11 @@ fun DriveFilesScreen(
                                 if (file.isDirectory) {
                                     folderStack = folderStack + file
                                 } else {
-                                    // TODO: Open file handling (intent or download)
+                                    openDriveFile(context, accessToken!!, file)
                                 }
-                            }
+                            },
+                            onDownload = { downloadDriveFile(context, accessToken!!, file) },
+                            onShare = { shareDriveFile(context, accessToken!!, file) }
                         )
                      }
                  }
@@ -270,9 +326,11 @@ private fun DriveFileItem(
     file: DriveFile,
     viewMode: DriveViewMode,
     accessToken: String?,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onDownload: () -> Unit,
+    onShare: () -> Unit
 ) {
-    val context = LocalContext.current
+    var showMenu by remember { mutableStateOf(false) }
     val formattedDate = remember(file.modifiedTime) {
         SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(file.modifiedTime))
     }
@@ -295,28 +353,64 @@ private fun DriveFileItem(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                       text = formattedDate, // Size is tricky for Drive files, requires more logic/API
+                        text = formattedDate,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                Box {
+                    if (!file.isDirectory) {
+                        IconButton(onClick = { showMenu = true }) { Icon(Icons.Rounded.MoreVert, "More") }
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Download") },
+                                leadingIcon = { Icon(Icons.Rounded.Download, null) },
+                                onClick = { showMenu = false; onDownload() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Share") },
+                                leadingIcon = { Icon(Icons.Rounded.Share, null) },
+                                onClick = { showMenu = false; onShare() }
+                            )
+                        }
+                    }
+                }
             }
         } else {
-             Column(
-                modifier = Modifier.fillMaxSize().padding(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                DriveThumbnail(file, 64.dp, accessToken)
-                Spacer(modifier = Modifier.height(8.dp))
-                 Text(
-                    text = file.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
-            }
+             Box {
+                 Column(
+                    modifier = Modifier.fillMaxSize().padding(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    DriveThumbnail(file, 64.dp, accessToken)
+                    Spacer(modifier = Modifier.height(8.dp))
+                     Text(
+                        text = file.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+                if (!file.isDirectory) {
+                    Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                        IconButton(onClick = { showMenu = true }) { Icon(Icons.Rounded.MoreVert, "More") }
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Download") },
+                                leadingIcon = { Icon(Icons.Rounded.Download, null) },
+                                onClick = { showMenu = false; onDownload() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Share") },
+                                leadingIcon = { Icon(Icons.Rounded.Share, null) },
+                                onClick = { showMenu = false; onShare() }
+                            )
+                        }
+                    }
+                }
+             }
         }
     }
 
@@ -434,4 +528,112 @@ private suspend fun listDriveFiles(accessToken: String, folderId: String, sortOr
             DriveFile(id, name, mimeType, size, modifiedTime, thumb)
         }
     }
+}
+
+private fun openDriveFile(context: Context, accessToken: String, file: DriveFile) {
+    Toast.makeText(context, "Opening...", Toast.LENGTH_SHORT).show()
+    kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+        val cachedFile = downloadFileToCache(context, accessToken, file)
+        withContext(Dispatchers.Main) {
+            if (cachedFile != null) {
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cachedFile)
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, file.mimeType)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                try {
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(context, "No app found to open this file", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Toast.makeText(context, "Failed to download", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
+
+private fun downloadDriveFile(context: Context, accessToken: String, file: DriveFile) {
+     Toast.makeText(context, "Downloading...", Toast.LENGTH_SHORT).show()
+     kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+         try {
+             val client = OkHttpClient()
+             val request = Request.Builder().url("https://www.googleapis.com/drive/v3/files/${file.id}?alt=media").addHeader("Authorization", "Bearer $accessToken").build()
+             val response = client.newCall(request).execute()
+             if (response.isSuccessful) {
+                 val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                 val destFile = File(downloadsDir, file.name)
+                 val fos = java.io.FileOutputStream(destFile)
+                 response.body?.byteStream()?.copyTo(fos)
+                 fos.close()
+                 withContext(Dispatchers.Main) { Toast.makeText(context, "Saved to Downloads", Toast.LENGTH_SHORT).show() }
+             } else {
+                 withContext(Dispatchers.Main) { Toast.makeText(context, "Download failed", Toast.LENGTH_SHORT).show() }
+             }
+         } catch (e: Exception) {
+             withContext(Dispatchers.Main) { Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show() }
+         }
+     }
+}
+
+private fun shareDriveFile(context: Context, accessToken: String, file: DriveFile) {
+    Toast.makeText(context, "Preparing share...", Toast.LENGTH_SHORT).show()
+    kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+        val cachedFile = downloadFileToCache(context, accessToken, file)
+        withContext(Dispatchers.Main) {
+            if (cachedFile != null) {
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", cachedFile)
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    setType(file.mimeType)
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(intent, "Share file"))
+            } else {
+                Toast.makeText(context, "Failed to share", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
+
+private fun downloadFileToCache(context: Context, accessToken: String, file: DriveFile): java.io.File? {
+     try {
+         val client = OkHttpClient()
+         val request = Request.Builder().url("https://www.googleapis.com/drive/v3/files/${file.id}?alt=media").addHeader("Authorization", "Bearer $accessToken").build()
+         val response = client.newCall(request).execute()
+         if (response.isSuccessful) {
+             val destFile = java.io.File(context.cacheDir, file.name)
+             val fos = java.io.FileOutputStream(destFile)
+             response.body?.byteStream()?.copyTo(fos)
+             fos.close()
+             return destFile
+         }
+     } catch (e: Exception) {
+         e.printStackTrace()
+     }
+     return null
+}
+
+private suspend fun uploadFileToDrive(accessToken: String, folderId: String, file: java.io.File, mimeType: String) = withContext(Dispatchers.IO) {
+    val client = OkHttpClient()
+    
+    // Metadata
+    val metadataJson = """{"name": "${file.name}", "parents": ["$folderId"]}"""
+    val metadataPart = MultipartBody.Part.createFormData("metadata", null, RequestBody.create("application/json; charset=UTF-8".toMediaTypeOrNull(), metadataJson))
+    val filePart = MultipartBody.Part.createFormData("file", file.name, file.asRequestBody(mimeType.toMediaTypeOrNull()))
+    
+    val requestBody = MultipartBody.Builder()
+        .setType(MultipartBody.FORM)
+        .addPart(metadataPart)
+        .addPart(filePart)
+        .build()
+        
+    val request = Request.Builder()
+        .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart")
+        .addHeader("Authorization", "Bearer $accessToken")
+        .post(requestBody)
+        .build()
+        
+    val response = client.newCall(request).execute()
+    if (!response.isSuccessful) throw Exception("Upload failed: ${response.code}")
 }
