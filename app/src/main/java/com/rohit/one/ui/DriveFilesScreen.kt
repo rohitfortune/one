@@ -146,33 +146,50 @@ fun DriveFilesScreen(
     var showSortMenu by remember { mutableStateOf(false) }
     var refreshTrigger by remember { mutableStateOf(0) }
 
-    // Upload Launcher
-    val uploadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let {
-            val contentResolver = context.contentResolver
-            val type = contentResolver.getType(uri) ?: "application/octet-stream"
-            val name = androidx.documentfile.provider.DocumentFile.fromSingleUri(context, uri)?.name ?: "upload"
+    // State for Upload Menu
+    var showUploadMenu by remember { mutableStateOf(false) }
+    var tempCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
+
+    // Helper to upload a uri
+    fun uploadUri(uri: android.net.Uri) {
+         val contentResolver = context.contentResolver
+         val type = contentResolver.getType(uri) ?: "application/octet-stream"
+         val name = androidx.documentfile.provider.DocumentFile.fromSingleUri(context, uri)?.name ?: "upload_${System.currentTimeMillis()}"
             
-            kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
-                 try {
-                     val inputStream = contentResolver.openInputStream(uri)
-                     val tempFile = File(context.cacheDir, name)
-                     val outputStream = FileOutputStream(tempFile)
-                     inputStream?.copyTo(outputStream)
-                     inputStream?.close()
-                     outputStream.close()
-                     
-                     uploadFileToDrive(accessToken!!, folderStack.last().id, tempFile, type)
-                     withContext(Dispatchers.Main) {
-                         Toast.makeText(context, "Upload complete", Toast.LENGTH_SHORT).show()
-                         refreshTrigger++
-                     }
-                 } catch (e: Exception) {
-                     withContext(Dispatchers.Main) {
-                         Toast.makeText(context, "Upload failed: ${e.message}", Toast.LENGTH_SHORT).show()
-                     }
+         kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+             try {
+                 val inputStream = contentResolver.openInputStream(uri)
+                 val tempFile = File(context.cacheDir, name)
+                 val outputStream = java.io.FileOutputStream(tempFile)
+                 inputStream?.copyTo(outputStream)
+                 inputStream?.close()
+                 outputStream.close()
+                 
+                 uploadFileToDrive(accessToken!!, folderStack.last().id, tempFile, type)
+                 withContext(Dispatchers.Main) {
+                     Toast.makeText(context, "Upload complete", Toast.LENGTH_SHORT).show()
+                     refreshTrigger++
                  }
-            }
+             } catch (e: Exception) {
+                 withContext(Dispatchers.Main) {
+                     Toast.makeText(context, "Upload failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                 }
+             }
+         }
+    }
+
+    // Launchers
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { uploadUri(it) }
+    }
+    
+    val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { uploadUri(it) }
+    }
+    
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success && tempCameraUri != null) {
+            uploadUri(tempCameraUri!!)
         }
     }
 
@@ -222,8 +239,36 @@ fun DriveFilesScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { uploadLauncher.launch("*/*") }) {
-                        Icon(imageVector = Icons.Rounded.Add, contentDescription = "Upload File")
+                    Box {
+                        IconButton(onClick = { showUploadMenu = true }) {
+                            Icon(imageVector = Icons.Rounded.Add, contentDescription = "Upload File")
+                        }
+                        DropdownMenu(expanded = showUploadMenu, onDismissRequest = { showUploadMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Gallery") },
+                                onClick = { 
+                                    showUploadMenu = false
+                                    galleryLauncher.launch("image/*") 
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Files") },
+                                onClick = { 
+                                    showUploadMenu = false
+                                    fileLauncher.launch("*/*") 
+                                }
+                            )
+                             DropdownMenuItem(
+                                text = { Text("Camera") },
+                                onClick = { 
+                                    showUploadMenu = false
+                                    val tempFile = File.createTempFile("camera_", ".jpg", context.cacheDir)
+                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", tempFile)
+                                    tempCameraUri = uri
+                                    cameraLauncher.launch(uri)
+                                }
+                            )
+                        }
                     }
                     IconButton(onClick = { viewMode = if (viewMode == DriveViewMode.List) DriveViewMode.Grid else DriveViewMode.List }) {
                         Icon(
