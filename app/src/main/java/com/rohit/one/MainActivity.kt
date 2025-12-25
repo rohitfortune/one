@@ -121,16 +121,32 @@ class MainActivity : FragmentActivity() {
 
     private val isAppLocked = mutableStateOf(false)
 
+    override fun onPause() {
+        super.onPause()
+        // Record the time when the app goes into the background
+        if (!isAppLocked.value) {
+            lastBackgroundTimestamp = System.currentTimeMillis()
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         if (com.rohit.one.data.SettingsStore.isAppLockEnabled(this)) {
             // If the app is currently unlocked but we are resuming, we should re-lock?
-            // Standard behavior usually locks on cold start or after timeout. 
+            // Standard behavior usually locks on cold start or after timeout.
             // For simple "App Lock", locking on every Resume (background -> foreground) is safest.
             // Check if we are already locked to avoid double-prompting (though onResume is called once per foregrounding)
             if (!isAppLocked.value) {
-                 isAppLocked.value = true
-                 authenticateUser()
+                 // Check if 1 minute (60000 ms) has passed since we went to background
+                 // Use static timestamp (memory-only) so it resets on process death
+                 val lastBg = lastBackgroundTimestamp
+                 val currentTime = System.currentTimeMillis()
+                 if (lastBg != 0L && (currentTime - lastBg) > 60_000) {
+                     isAppLocked.value = true
+                     authenticateUser()
+                 }
+                 // Reset timestamp so we don't accidentally lock while using the app
+                 lastBackgroundTimestamp = 0
             }
         }
     }
@@ -312,6 +328,8 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         // kept for potential legacy code paths
+        // Memory-only timestamp to track background time. Resets on process death.
+        var lastBackgroundTimestamp: Long = 0
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -344,7 +362,15 @@ class MainActivity : FragmentActivity() {
         } catch (_: Exception) {}
 
         if (com.rohit.one.data.SettingsStore.isAppLockEnabled(this)) {
-            isAppLocked.value = true
+            val lastBg = lastBackgroundTimestamp
+            val now = System.currentTimeMillis()
+            // If recently backgrounded (< 1 min, and process still alive), keep unlocked. Otherwise lock.
+            // Note: if process was killed, lastBg is 0 (default), so we lock.
+            if (lastBg != 0L && (now - lastBg) < 60_000) {
+                isAppLocked.value = false
+            } else {
+                isAppLocked.value = true
+            }
         }
 
         setContent {
