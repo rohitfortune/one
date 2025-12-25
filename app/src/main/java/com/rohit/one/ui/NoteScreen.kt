@@ -1134,9 +1134,6 @@ private fun ParagraphBlock(
         visualTransformation = styledVisualTransformation(spans),
         decorationBox = { innerTextField ->
             Box {
-                if (value.text.isEmpty()) {
-                    Text("Note content…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
                 innerTextField()
             }
         }
