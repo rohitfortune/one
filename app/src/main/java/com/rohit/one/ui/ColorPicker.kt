@@ -1,6 +1,7 @@
 package com.rohit.one.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -111,6 +112,28 @@ fun ColorPicker(
                             .fillMaxSize()
                             .background(brush = Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
                     )
+
+                    // Selection indicator
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val cx = sat * size.width
+                        val cy = (1f - value) * size.height
+                        val radius = 8.dp.toPx()
+                        
+                        // Draw a white ring for visibility
+                        drawCircle(
+                            color = Color.White,
+                            radius = radius,
+                            center = androidx.compose.ui.geometry.Offset(cx, cy),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                        )
+                        // Optional: Draw a smaller black ring inside for better contrast on light backgrounds
+                        drawCircle(
+                            color = Color.Black,
+                            radius = radius - 2.dp.toPx(),
+                            center = androidx.compose.ui.geometry.Offset(cx, cy),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                        )
+                    }
                 }
             }
 
