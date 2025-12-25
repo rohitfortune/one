@@ -116,6 +116,9 @@ import androidx.compose.ui.graphics.toArgb
 
 // --- New structured model for the editor ---
 
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.SolidColor
+
 private enum class InlineStyle { Bold, Italic, Underline }
 
 // Represents a formatting span
@@ -1098,6 +1101,7 @@ private fun ParagraphBlock(
     val focusRequester = remember { FocusRequester() }
 
     BasicTextField(
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         value = value,
         onValueChange = { newValue ->
             if (editMode != EditMode.TEXT) return@BasicTextField
@@ -1182,6 +1186,7 @@ private fun ChecklistBlock(
         var value by remember(item) { mutableStateOf(TextFieldValue(item.text, TextRange(item.text.length))) }
 
         BasicTextField(
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             value = value,
             onValueChange = { newValue ->
                 if (editMode != EditMode.TEXT) return@BasicTextField
@@ -1266,6 +1271,7 @@ private fun BulletBlock(
         Text("•", modifier = Modifier.padding(end = 8.dp), fontSize = 18.sp)
         var value by remember(item) { mutableStateOf(TextFieldValue(item.text, TextRange(item.text.length))) }
         BasicTextField(
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             value = value,
             onValueChange = { newValue ->
                 if (editMode != EditMode.TEXT) return@BasicTextField
@@ -1337,6 +1343,7 @@ private fun NumberedBlock(
         Text("${item.index}.", modifier = Modifier.padding(end = 8.dp), fontSize = 16.sp)
         var value by remember(item) { mutableStateOf(TextFieldValue(item.text, TextRange(item.text.length))) }
         BasicTextField(
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             value = value,
             onValueChange = { newValue ->
                 if (editMode != EditMode.TEXT) return@BasicTextField

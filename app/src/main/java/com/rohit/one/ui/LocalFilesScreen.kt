@@ -1,6 +1,5 @@
 package com.rohit.one.ui
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -11,19 +10,16 @@ import android.text.format.Formatter
 import android.webkit.MimeTypeMap
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,21 +31,19 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
+import androidx.compose.material.icons.automirrored.rounded.Sort
+import androidx.compose.material.icons.automirrored.rounded.ViewList
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GridView
-import androidx.compose.material.icons.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Share
-import androidx.compose.material.icons.rounded.Sort
-import androidx.compose.material.icons.rounded.ViewList
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -58,7 +52,6 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -80,12 +73,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
@@ -212,13 +205,13 @@ fun LocalFilesScreen(onBack: () -> Unit) {
                     }
                     IconButton(onClick = { viewMode = if (viewMode == ViewMode.List) ViewMode.Grid else ViewMode.List }) {
                         Icon(
-                            imageVector = if (viewMode == ViewMode.List) Icons.Rounded.GridView else Icons.Rounded.ViewList,
+                            imageVector = if (viewMode == ViewMode.List) Icons.Rounded.GridView else Icons.AutoMirrored.Rounded.ViewList,
                             contentDescription = "Toggle View"
                         )
                     }
                     Box {
                         IconButton(onClick = { showSortMenu = true }) {
-                            Icon(imageVector = Icons.Rounded.Sort, contentDescription = "Sort")
+                            Icon(imageVector = Icons.AutoMirrored.Rounded.Sort, contentDescription = "Sort")
                         }
                         DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
                             SortOrder.values().forEach { order ->
@@ -233,7 +226,7 @@ fun LocalFilesScreen(onBack: () -> Unit) {
                         }
                     }
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                     scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
                 )
@@ -630,7 +623,7 @@ private fun FileThumbnail(entry: DocEntry, size: androidx.compose.ui.unit.Dp) {
             )
         } else {
             Icon(
-                imageVector = Icons.Rounded.InsertDriveFile,
+                imageVector = Icons.AutoMirrored.Rounded.InsertDriveFile,
                 contentDescription = "File",
                 modifier = Modifier.size(size),
                 tint = MaterialTheme.colorScheme.secondary

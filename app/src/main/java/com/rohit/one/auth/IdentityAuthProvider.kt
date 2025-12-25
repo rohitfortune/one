@@ -1,3 +1,4 @@
+@file:Suppress("DEPRECATION")
 package com.rohit.one.auth
 
 import android.app.Activity

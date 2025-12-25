@@ -231,10 +231,10 @@ class BackupRepository(@Suppress("unused") private val context: Context) {
                      }
                      
                      // Strategy 2: Direct File Read (old raw path)
-                     if (bytes == null && att.uri.startsWith("/") && java.io.File(att.uri).exists()) {
+                     if (bytes == null && att.uri.startsWith("/") && file.exists()) {
                          try {
                               Log.d("BackupRepo", "Strategy 2: Reading raw file: ${att.uri}")
-                              bytes = java.io.FileInputStream(java.io.File(att.uri)).use { it.readBytes() }
+                              bytes = java.io.FileInputStream(file).use { it.readBytes() }
                          } catch (e: Exception) {
                               Log.w("BackupRepo", "Strategy 2 failed: ${e.message}")
                          }
@@ -343,9 +343,9 @@ class BackupRepository(@Suppress("unused") private val context: Context) {
                      }
 
                      // Strategy 2: Direct File Read
-                     if (bytes == null && att.uri.startsWith("/") && java.io.File(att.uri).exists()) {
+                     if (bytes == null && att.uri.startsWith("/") && file.exists()) {
                          try {
-                              bytes = java.io.FileInputStream(java.io.File(att.uri)).use { it.readBytes() }
+                              bytes = java.io.FileInputStream(file).use { it.readBytes() }
                          } catch (e: Exception) { Log.w("BackupRepo", "PP-Strategy 2 failed: ${e.message}") }
                      }
 

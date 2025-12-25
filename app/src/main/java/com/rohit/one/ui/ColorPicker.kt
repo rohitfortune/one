@@ -11,7 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.consumePositionChange
+
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -43,8 +43,8 @@ fun ColorPicker(
 
     // Wrap in BoxWithConstraints using the provided modifier so we can measure available width/height
     BoxWithConstraints(modifier = modifier) {
-        val availW = maxWidth
         val availH = maxHeight
+
 
         val horizontalPadding = 16.dp
         val verticalSpacing = 12.dp
@@ -55,7 +55,6 @@ fun ColorPicker(
         // Compute squareSize so square + spacer + hue bar vertically fit into availH,
         // but the square should fill the available width (minus horizontal padding)
         // Make the SV area fill full available width (inside padding) and use a clamped height
-        val availableWidthForSV = (availW - horizontalPadding * 2f).coerceAtLeast(56.dp)
         val maxSVHeight = (availH - verticalSpacing - barHeight - 16.dp).coerceAtLeast(56.dp)
 
         Column(modifier = Modifier
@@ -95,7 +94,7 @@ fun ColorPicker(
                                 }
                                 launch {
                                     detectDragGestures { change, _ ->
-                                        change.consumePositionChange()
+                                        change.consume()
                                         val w = size.width.toFloat().coerceAtLeast(1f)
                                         val h = size.height.toFloat().coerceAtLeast(1f)
                                         val x = change.position.x.coerceIn(0f, w)
@@ -162,7 +161,7 @@ fun ColorPicker(
                             }
                             launch {
                                 detectDragGestures { change, _ ->
-                                    change.consumePositionChange()
+                                    change.consume()
                                     val totalW = size.width.toFloat().coerceAtLeast(1f)
                                     val localX = change.position.x.coerceIn(0f, totalW)
                                     hue = ((localX / totalW) * 360f).coerceIn(0f, 360f)

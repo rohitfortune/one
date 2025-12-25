@@ -1,4 +1,5 @@
 
+@file:Suppress("UNCHECKED_CAST")
 package com.rohit.one.ui
 
 import android.content.Context
@@ -18,6 +19,7 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.io.FileOutputStream
 import kotlinx.coroutines.launch
@@ -46,9 +48,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GridView
-import androidx.compose.material.icons.rounded.InsertDriveFile
-import androidx.compose.material.icons.rounded.Sort
-import androidx.compose.material.icons.rounded.ViewList
+import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
+import androidx.compose.material.icons.automirrored.rounded.Sort
+import androidx.compose.material.icons.automirrored.rounded.ViewList
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -278,13 +280,13 @@ fun DriveFilesScreen(
                     }
                     IconButton(onClick = { viewMode = if (viewMode == DriveViewMode.List) DriveViewMode.Grid else DriveViewMode.List }) {
                         Icon(
-                            imageVector = if (viewMode == DriveViewMode.List) Icons.Rounded.GridView else Icons.Rounded.ViewList,
+                            imageVector = if (viewMode == DriveViewMode.List) Icons.Rounded.GridView else Icons.AutoMirrored.Rounded.ViewList,
                             contentDescription = "Toggle View"
                         )
                     }
                     Box {
                         IconButton(onClick = { showSortMenu = true }) {
-                            Icon(imageVector = Icons.Rounded.Sort, contentDescription = "Sort")
+                            Icon(imageVector = Icons.AutoMirrored.Rounded.Sort, contentDescription = "Sort")
                         }
                         DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
                             DriveSortOrder.values().forEach { order ->
@@ -299,7 +301,7 @@ fun DriveFilesScreen(
                         }
                     }
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                     scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
                 )
@@ -544,7 +546,7 @@ private fun DriveThumbnail(file: DriveFile, size: androidx.compose.ui.unit.Dp, a
             )
          } else {
              Icon(
-                imageVector = Icons.Rounded.InsertDriveFile,
+                imageVector = Icons.AutoMirrored.Rounded.InsertDriveFile,
                 contentDescription = "File",
                 modifier = Modifier.size(size),
                 tint = MaterialTheme.colorScheme.secondary
@@ -698,7 +700,7 @@ private suspend fun uploadFileToDrive(accessToken: String, folderId: String, fil
     
     // Metadata
     val metadataJson = """{"name": "${file.name}", "parents": ["$folderId"]}"""
-    val metadataPart = MultipartBody.Part.createFormData("metadata", null, RequestBody.create("application/json; charset=UTF-8".toMediaTypeOrNull(), metadataJson))
+    val metadataPart = MultipartBody.Part.createFormData("metadata", null, metadataJson.toRequestBody("application/json; charset=UTF-8".toMediaTypeOrNull()))
     val filePart = MultipartBody.Part.createFormData("file", file.name, file.asRequestBody(mimeType.toMediaTypeOrNull()))
     
     val requestBody = MultipartBody.Builder()
@@ -721,7 +723,7 @@ private suspend fun deleteDriveFile(accessToken: String, fileId: String) = withC
     val client = OkHttpClient()
     // Using PATCH to trash instead of DELETE (permanent) for safety
     val metadataJson = """{"trashed": true}"""
-    val requestBody = RequestBody.create("application/json; charset=UTF-8".toMediaTypeOrNull(), metadataJson)
+    val requestBody = metadataJson.toRequestBody("application/json; charset=UTF-8".toMediaTypeOrNull())
     
     val request = Request.Builder()
         .url("https://www.googleapis.com/drive/v3/files/$fileId")

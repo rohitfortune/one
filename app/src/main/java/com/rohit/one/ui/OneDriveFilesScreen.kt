@@ -1,3 +1,4 @@
+@file:Suppress("UNCHECKED_CAST")
 package com.rohit.one.ui
 
 import android.app.Activity
@@ -16,6 +17,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.core.content.FileProvider
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.io.FileOutputStream
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -43,9 +45,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GridView
-import androidx.compose.material.icons.rounded.InsertDriveFile
-import androidx.compose.material.icons.rounded.Sort
-import androidx.compose.material.icons.rounded.ViewList
+import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
+import androidx.compose.material.icons.automirrored.rounded.Sort
+import androidx.compose.material.icons.automirrored.rounded.ViewList
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -324,13 +326,13 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
                     }
                     IconButton(onClick = { viewMode = if (viewMode == OneDriveViewMode.List) OneDriveViewMode.Grid else OneDriveViewMode.List }) {
                         Icon(
-                            imageVector = if (viewMode == OneDriveViewMode.List) Icons.Rounded.GridView else Icons.Rounded.ViewList,
+                            imageVector = if (viewMode == OneDriveViewMode.List) Icons.Rounded.GridView else Icons.AutoMirrored.Rounded.ViewList,
                             contentDescription = "Toggle View"
                         )
                     }
                     Box {
                         IconButton(onClick = { showSortMenu = true }) {
-                            Icon(imageVector = Icons.Rounded.Sort, contentDescription = "Sort")
+                            Icon(imageVector = Icons.AutoMirrored.Rounded.Sort, contentDescription = "Sort")
                         }
                         DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
                             OneDriveSortOrder.values().forEach { order ->
@@ -356,7 +358,7 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
                         Text("LO", style = MaterialTheme.typography.labelSmall)
                     }
                 },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                     scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
                 )
@@ -414,7 +416,6 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
                         OneDriveFileItem(
                             file = file,
                             viewMode = viewMode,
-                            accessToken = accessToken,
                             onClick = {
                                 if (file.isDirectory) {
                                     folderStack = folderStack + file
@@ -450,13 +451,11 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
 private fun OneDriveFileItem(
     file: OneDriveFile,
     viewMode: OneDriveViewMode,
-    accessToken: String?,
     onClick: () -> Unit,
     onDownload: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
     val formattedDate = remember(file.modifiedTime) {
         SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(file.modifiedTime))
@@ -470,7 +469,7 @@ private fun OneDriveFileItem(
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OneDriveThumbnail(file, 48.dp, accessToken)
+                OneDriveThumbnail(file, 48.dp)
                 Spacer(modifier = Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -515,7 +514,7 @@ private fun OneDriveFileItem(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    OneDriveThumbnail(file, 64.dp, accessToken)
+                    OneDriveThumbnail(file, 64.dp)
                     Spacer(modifier = Modifier.height(8.dp))
                      Text(
                         text = file.name,
@@ -575,7 +574,7 @@ private fun OneDriveFileItem(
 }
 
 @Composable
-private fun OneDriveThumbnail(file: OneDriveFile, size: androidx.compose.ui.unit.Dp, accessToken: String?) {
+private fun OneDriveThumbnail(file: OneDriveFile, size: androidx.compose.ui.unit.Dp) {
      val context = LocalContext.current
      if (file.isDirectory) {
         Icon(
@@ -598,7 +597,7 @@ private fun OneDriveThumbnail(file: OneDriveFile, size: androidx.compose.ui.unit
             )
          } else {
              Icon(
-                imageVector = Icons.Rounded.InsertDriveFile,
+                imageVector = Icons.AutoMirrored.Rounded.InsertDriveFile,
                 contentDescription = "File",
                 modifier = Modifier.size(size),
                 tint = MaterialTheme.colorScheme.secondary
