@@ -15,6 +15,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Button
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -23,6 +28,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Note
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.Settings
@@ -110,6 +116,22 @@ class MainActivity : FragmentActivity() {
 
     private lateinit var notesViewModel: NotesViewModel
     private lateinit var vaultsViewModel: VaultsViewModel
+
+    private val isAppLocked = mutableStateOf(false)
+
+    override fun onResume() {
+        super.onResume()
+        if (com.rohit.one.data.SettingsStore.isAppLockEnabled(this)) {
+            // If the app is currently unlocked but we are resuming, we should re-lock?
+            // Standard behavior usually locks on cold start or after timeout. 
+            // For simple "App Lock", locking on every Resume (background -> foreground) is safest.
+            // Check if we are already locked to avoid double-prompting (though onResume is called once per foregrounding)
+            if (!isAppLocked.value) {
+                 isAppLocked.value = true
+                 authenticateUser()
+            }
+        }
+    }
 
     // ActivityResult launcher for GoogleSignIn (interactive chooser)
     private val googleSignInLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
@@ -319,14 +341,23 @@ class MainActivity : FragmentActivity() {
             }
         } catch (_: Exception) {}
 
+        if (com.rohit.one.data.SettingsStore.isAppLockEnabled(this)) {
+            isAppLocked.value = true
+        }
+
         setContent {
+            val locked by remember { isAppLocked }
             OneTheme {
-                OneApp(
-                    notesViewModel = notesViewModel,
-                    vaultsViewModel = vaultsViewModel,
-                    onSignIn = { startSignIn() },
-                    signedInAccountState = signedInAccountState
-                )
+                if (locked) {
+                    LockScreen { authenticateUser() }
+                } else {
+                    OneApp(
+                        notesViewModel = notesViewModel,
+                        vaultsViewModel = vaultsViewModel,
+                        onSignIn = { startSignIn() },
+                        signedInAccountState = signedInAccountState
+                    )
+                }
             }
         }
 
@@ -501,6 +532,41 @@ class MainActivity : FragmentActivity() {
 
          Log.e("OneApp","trySignInClientFallback: all fallback attempts failed — unable to start sign-in flow")
          Toast.makeText(this, "Unable to start sign-in flow", Toast.LENGTH_LONG).show()
+     }
+
+     private fun authenticateUser() {
+        val executor = ContextCompat.getMainExecutor(this)
+        val biometricPrompt = BiometricPrompt(this, executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    isAppLocked.value = false
+                    Toast.makeText(applicationContext, "Unlocked", Toast.LENGTH_SHORT).show()
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    super.onAuthenticationError(errorCode, errString)
+                    // Users can cancel the prompt (e.g. back button). In that case, we stay locked.
+                    // If errors like "too many attempts", we also stay locked.
+                    // We can show a toast or just let the UI remain the Lock Screen.
+                    if (errorCode != BiometricPrompt.ERROR_USER_CANCELED && errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                         Toast.makeText(applicationContext, "Authentication error: $errString", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    Toast.makeText(applicationContext, "Authentication failed", Toast.LENGTH_SHORT).show()
+                }
+            })
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Unlock One")
+            .setSubtitle("Authenticate to access your data")
+            .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+            .build()
+            
+        biometricPrompt.authenticate(promptInfo)
      }
 
     override fun onDestroy() {
@@ -916,6 +982,35 @@ fun NoteItem(note: Note, onClick: () -> Unit) {
             val sdf = java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault())
             val dateString = sdf.format(java.util.Date(note.lastModified))
             Text(text = "Last updated: $dateString", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+fun LockScreen(onUnlock: () -> Unit) {
+    Scaffold { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Lock,
+                contentDescription = "Locked",
+                modifier = Modifier.size(72.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Text(
+                text = "One is locked",
+                style = MaterialTheme.typography.headlineMedium
+            )
+            Spacer(modifier = Modifier.height(32.dp))
+            Button(onClick = onUnlock) {
+                Text("Unlock")
+            }
         }
     }
 }

@@ -185,6 +185,22 @@ fun BackupScreen(
                 }
             }
 
+            // Security Section
+            Text("Security", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp))
+            var isAppLockEnabled by remember { mutableStateOf(com.rohit.one.data.SettingsStore.isAppLockEnabled(context)) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("App Lock")
+                Spacer(modifier = Modifier.weight(1f))
+                Switch(checked = isAppLockEnabled, onCheckedChange = { enabled ->
+                    isAppLockEnabled = enabled
+                    com.rohit.one.data.SettingsStore.setAppLockEnabled(context, enabled)
+                })
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            Text("Backup & Restore", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
+
             Row(modifier = Modifier.padding(top = 8.dp)) {
                 Text("Use passphrase backup")
                 Spacer(modifier = Modifier.weight(1f))
