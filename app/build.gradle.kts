@@ -122,6 +122,9 @@ dependencies {
     // Removed AppAuth fallback - migration to Google Identity (GoogleSignIn/AuthorizationClient)
     // If you need PKCE fallback later, re-add AppAuth coordinates here.
 
+    // DocumentFile API to browse SAF trees
+    implementation("androidx.documentfile:documentfile:1.0.1")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
