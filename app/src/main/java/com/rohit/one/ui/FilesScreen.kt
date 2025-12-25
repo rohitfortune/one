@@ -1,19 +1,22 @@
 package com.rohit.one.ui
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.CloudQueue
+import androidx.compose.material.icons.rounded.Smartphone
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 
 @Composable
 fun FilesScreen(
@@ -21,61 +24,34 @@ fun FilesScreen(
     onSignIn: () -> Unit,
     signedInAccount: String?
 ) {
-    val current = remember { mutableStateOf<FilesRoute>(FilesRoute.Menu) }
+    var selectedItem by rememberSaveable { mutableIntStateOf(0) }
+    val items = listOf("Local", "Drive", "OneDrive")
+    val icons = listOf(Icons.Rounded.Smartphone, Icons.Rounded.Cloud, Icons.Rounded.CloudQueue)
 
-    when (current.value) {
-        FilesRoute.Menu -> {
-            Column(
-                modifier = modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(text = "Browse files", style = MaterialTheme.typography.headlineSmall)
-
-                Button(
-                    onClick = { current.value = FilesRoute.Local },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 24.dp)
-                ) {
-                    Text(text = "Browse local files")
-                }
-
-                Button(
-                    onClick = { current.value = FilesRoute.GoogleDrive },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 12.dp)
-                ) {
-                    Text(text = "Browse Google Drive")
-                }
-
-                Button(
-                    onClick = { current.value = FilesRoute.OneDrive },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 12.dp)
-                ) {
-                    Text(text = "Browse OneDrive")
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                items.forEachIndexed { index, item ->
+                    NavigationBarItem(
+                        icon = { Icon(icons[index], contentDescription = item) },
+                        label = { Text(item) },
+                        selected = selectedItem == index,
+                        onClick = { selectedItem = index }
+                    )
                 }
             }
         }
-
-        FilesRoute.Local -> LocalFilesScreen(onBack = { current.value = FilesRoute.Menu })
-        FilesRoute.GoogleDrive -> DriveFilesScreen(
-            onBack = { current.value = FilesRoute.Menu },
-            onSignIn = onSignIn,
-            signedInAccount = signedInAccount
-        )
-        FilesRoute.OneDrive -> OneDriveFilesScreen(onBack = { current.value = FilesRoute.Menu })
+    ) { innerPadding ->
+        Box(modifier = modifier.padding(bottom = innerPadding.calculateBottomPadding())) {
+            when (selectedItem) {
+                0 -> LocalFilesScreen(onBack = { /* No-op at top level */ })
+                1 -> DriveFilesScreen(
+                    onBack = { /* No-op at top level */ },
+                    onSignIn = onSignIn,
+                    signedInAccount = signedInAccount
+                )
+                2 -> OneDriveFilesScreen(onBack = { /* No-op at top level */ })
+            }
+        }
     }
-}
-
-sealed class FilesRoute {
-    object Menu : FilesRoute()
-    object Local : FilesRoute()
-    object GoogleDrive : FilesRoute()
-    object OneDrive : FilesRoute()
 }

@@ -822,7 +822,7 @@ fun MainScreen(
                         onSignOut = if (onSignOut != null) { { onSignOut() } } else null
                     )
                     AppDestinations.FILES -> FilesScreen(
-                        modifier = Modifier.padding(innerPadding),
+                        modifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding()),
                         onSignIn = onSignIn,
                         signedInAccount = signedInAccount
                     )
