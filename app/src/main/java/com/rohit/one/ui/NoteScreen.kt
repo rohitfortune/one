@@ -509,6 +509,12 @@ fun NoteScreen(
                                         }
                                     },
                                     onLongClick = {
+                                        // Ensure long-press both opens the stroke sheet and enables draw mode.
+                                        isEraserActive = false
+                                        editMode = EditMode.DRAW
+                                        drawingState = drawingState.copy(isDrawing = true, currentStroke = null)
+                                        focusManager.clearFocus(force = true)
+                                        keyboardController?.hide()
                                         showStrokeSheet = true
                                     }
                                 )
