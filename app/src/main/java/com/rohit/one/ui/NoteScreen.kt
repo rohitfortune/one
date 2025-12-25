@@ -1505,14 +1505,41 @@ private fun DrawingOverlay(
                                     listOf(stroke)
                                 } else {
                                     val anchorTop = computeAnchorTop(anchorIdx)
-                                    val filtered = stroke.points.filterNot { pt ->
+                                    val fragments = mutableListOf<Note.Path>()
+                                    var currentSegment = mutableListOf<Note.Point>()
+                                    
+                                    for (pt in stroke.points) {
                                         val sx = pt.x
                                         val sy = if (anchorIdx != null) anchorTop + pt.y else pt.y
                                         val dx = sx - pos.x
                                         val dy = sy - pos.y
-                                        hypot(dx.toDouble(), dy.toDouble()) < 16.0
+                                        // Increased eraser radius for better feel
+                                        val isErased = hypot(dx.toDouble(), dy.toDouble()) < 30.0
+                                        
+                                        if (isErased) {
+                                            if (currentSegment.size >= 2) {
+                                                fragments.add(
+                                                    stroke.copy(
+                                                        points = currentSegment.toList(),
+                                                        anchorLocalTop = if (anchorIdx != null) currentSegment.first().y else null
+                                                    )
+                                                )
+                                            }
+                                            currentSegment = mutableListOf()
+                                        } else {
+                                            currentSegment.add(pt)
+                                        }
                                     }
-                                    if (filtered.size >= 2) listOf(stroke.copy(points = filtered)) else emptyList()
+                                    // Add remaining segment
+                                    if (currentSegment.size >= 2) {
+                                        fragments.add(
+                                            stroke.copy(
+                                                points = currentSegment.toList(),
+                                                anchorLocalTop = if (anchorIdx != null) currentSegment.first().y else null
+                                            )
+                                        )
+                                    }
+                                    fragments
                                 }
                             }
                             state.copy(strokes = newStrokes, currentStroke = null)
