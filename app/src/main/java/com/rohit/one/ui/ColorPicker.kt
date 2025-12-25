@@ -19,6 +19,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+
 @Composable
 fun ColorPicker(
     onColorChanged: (Color) -> Unit,
@@ -68,20 +71,38 @@ fun ColorPicker(
                     .height(maxSVHeight)
                     .background(Color.Transparent)
             ) {
-                val wPx = with(LocalDensity.current) { availableWidthForSV.toPx() }
-                val hPx = with(LocalDensity.current) { maxSVHeight.toPx() }
+                // Remove composition-time pixel conversion (wPx, hPx) which caused stale layout issues
                 val hueColor = Color(AndroidColor.HSVToColor(floatArrayOf(hue, 1f, 1f)))
 
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(brush = Brush.horizontalGradient(listOf(Color.White, hueColor)))
-                        .pointerInput(hue) {
-                            detectTapGestures { offset ->
-                                val x = offset.x.coerceIn(0f, wPx)
-                                val y = offset.y.coerceIn(0f, hPx)
-                                sat = (x / wPx).coerceIn(0f, 1f)
-                                value = (1f - (y / hPx)).coerceIn(0f, 1f)
+                        .pointerInput(Unit) {
+                            // Run tap and drag detection concurrently to avoid blocking
+                            // Use the scope's current size for accurate coordinate resolution
+                            coroutineScope {
+                                launch {
+                                    detectTapGestures { offset ->
+                                        val w = size.width.toFloat().coerceAtLeast(1f)
+                                        val h = size.height.toFloat().coerceAtLeast(1f)
+                                        val x = offset.x.coerceIn(0f, w)
+                                        val y = offset.y.coerceIn(0f, h)
+                                        sat = (x / w).coerceIn(0f, 1f)
+                                        value = (1f - (y / h)).coerceIn(0f, 1f)
+                                    }
+                                }
+                                launch {
+                                    detectDragGestures { change, _ ->
+                                        change.consumePositionChange()
+                                        val w = size.width.toFloat().coerceAtLeast(1f)
+                                        val h = size.height.toFloat().coerceAtLeast(1f)
+                                        val x = change.position.x.coerceIn(0f, w)
+                                        val y = change.position.y.coerceIn(0f, h)
+                                        sat = (x / w).coerceIn(0f, 1f)
+                                        value = (1f - (y / h)).coerceIn(0f, 1f)
+                                    }
+                                }
                             }
                         }
                 ) {
@@ -108,26 +129,23 @@ fun ColorPicker(
                         )
                     )
                     .pointerInput(Unit) {
-                        detectTapGestures { offset ->
-                            val totalW = size.width.toFloat().coerceAtLeast(1f)
-                            val localX = offset.x.coerceIn(0f, totalW)
-                            hue = ((localX / totalW) * 360f).coerceIn(0f, 360f)
-                        }
-                    }
-                    .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDragStart = { offset ->
-                                val totalW = size.width.toFloat().coerceAtLeast(1f)
-                                val localX = offset.x.coerceIn(0f, totalW)
-                                hue = ((localX / totalW) * 360f).coerceIn(0f, 360f)
-                            },
-                            onDrag = { change, _ ->
-                                val totalW = size.width.toFloat().coerceAtLeast(1f)
-                                val localX = change.position.x.coerceIn(0f, totalW)
-                                hue = ((localX / totalW) * 360f).coerceIn(0f, 360f)
-                                change.consumePositionChange()
+                        coroutineScope {
+                            launch {
+                                detectTapGestures { offset ->
+                                    val totalW = size.width.toFloat().coerceAtLeast(1f)
+                                    val localX = offset.x.coerceIn(0f, totalW)
+                                    hue = ((localX / totalW) * 360f).coerceIn(0f, 360f)
+                                }
                             }
-                        )
+                            launch {
+                                detectDragGestures { change, _ ->
+                                    change.consumePositionChange()
+                                    val totalW = size.width.toFloat().coerceAtLeast(1f)
+                                    val localX = change.position.x.coerceIn(0f, totalW)
+                                    hue = ((localX / totalW) * 360f).coerceIn(0f, 360f)
+                                }
+                            }
+                        }
                     }
             )
         }

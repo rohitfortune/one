@@ -1549,7 +1549,7 @@ private fun DrawingOverlay(
                 }
             }
         } else {
-            Modifier.pointerInput(Unit) {
+            Modifier.pointerInput(strokeColor, strokeWidthDp) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     var anchorIndex: Int? = null
