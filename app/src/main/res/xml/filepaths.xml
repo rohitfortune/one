@@ -2,5 +2,6 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Allow sharing files placed under internal storage's files/attachments -->
     <files-path name="attachments" path="attachments/" />
+    <external-path name="external_files" path="." />
 </paths>
 

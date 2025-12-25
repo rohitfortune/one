@@ -645,8 +645,11 @@ private fun openFile(context: Context, file: File, mimeType: String) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(intent)
+    } catch (e: android.content.ActivityNotFoundException) {
+        Toast.makeText(context, "No app found to open this file", Toast.LENGTH_SHORT).show()
     } catch (e: Exception) {
         e.printStackTrace()
+        Toast.makeText(context, "Failed to open file", Toast.LENGTH_SHORT).show()
     }
 }
 
