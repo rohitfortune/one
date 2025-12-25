@@ -211,12 +211,54 @@ class BackupRepository(@Suppress("unused") private val context: Context) {
          val noteExports = notes.map { n ->
              val attachmentExports = n.attachments.map { att ->
                  val base64 = try {
-                     val inputStream = context.contentResolver.openInputStream(Uri.parse(att.uri))
-                     val bytes = inputStream?.readBytes()
-                     inputStream?.close()
-                     if (bytes != null) Base64.encodeToString(bytes, Base64.DEFAULT) else null
+                     var bytes: ByteArray? = null
+                     val file = java.io.File(att.uri)
+                     
+                     // Strategy 1: Reconstruct Path relative to current Context (safest)
+                     if (att.uri.contains("files/attachments/")) {
+                         try {
+                              val filename = att.uri.substringAfterLast("/")
+                              val cleanFile = java.io.File(java.io.File(context.filesDir, "attachments"), filename)
+                              Log.d("BackupRepo", "Strategy 1: Reading clean file: ${cleanFile.absolutePath}")
+                              if (cleanFile.exists()) {
+                                  bytes = java.io.FileInputStream(cleanFile).use { it.readBytes() }
+                              } else {
+                                  Log.w("BackupRepo", "Strategy 1: File not found at clean path")
+                              }
+                         } catch (e: Exception) {
+                              Log.w("BackupRepo", "Strategy 1 failed: ${e.message}")
+                         }
+                     }
+                     
+                     // Strategy 2: Direct File Read (old raw path)
+                     if (bytes == null && att.uri.startsWith("/") && java.io.File(att.uri).exists()) {
+                         try {
+                              Log.d("BackupRepo", "Strategy 2: Reading raw file: ${att.uri}")
+                              bytes = java.io.FileInputStream(java.io.File(att.uri)).use { it.readBytes() }
+                         } catch (e: Exception) {
+                              Log.w("BackupRepo", "Strategy 2 failed: ${e.message}")
+                         }
+                     }
+
+                     // Strategy 3: Parsing as URI
+                     if (bytes == null) {
+                         try {
+                              Log.d("BackupRepo", "Strategy 3: Reading parsed URI: ${att.uri}")
+                              bytes = context.contentResolver.openInputStream(Uri.parse(att.uri))?.use { it.readBytes() }
+                         } catch (e: Exception) {
+                              Log.w("BackupRepo", "Strategy 3 failed: ${e.message}")
+                         }
+                     }
+
+                     if (bytes != null && bytes.isNotEmpty()) {
+                         Log.d("BackupRepo", "Success! Read ${bytes.size} bytes")
+                         Base64.encodeToString(bytes, Base64.DEFAULT)
+                     } else {
+                         Log.e("BackupRepo", "ALL STRATEGIES FAILED or EMPTY FILE for ${att.uri}")
+                         null
+                     }
                  } catch (e: Exception) {
-                     Log.w("BackupRepository", "Failed to read attachment ${att.uri}: ${e.message}")
+                     Log.e("BackupRepo", "Fatal error reading attachment ${att.uri}", e)
                      null
                  }
                  AttachmentExport(att.uri, att.displayName, att.mimeType, base64)
@@ -286,12 +328,42 @@ class BackupRepository(@Suppress("unused") private val context: Context) {
          val noteExports = notes.map { n ->
              val attachmentExports = n.attachments.map { att ->
                  val base64 = try {
-                     val inputStream = context.contentResolver.openInputStream(Uri.parse(att.uri))
-                     val bytes = inputStream?.readBytes()
-                     inputStream?.close()
-                     if (bytes != null) Base64.encodeToString(bytes, Base64.DEFAULT) else null
+                     var bytes: ByteArray? = null
+                     val file = java.io.File(att.uri)
+                     
+                     // Strategy 1: Reconstruct Path relative to current Context
+                     if (att.uri.contains("files/attachments/")) {
+                         try {
+                              val filename = att.uri.substringAfterLast("/")
+                              val cleanFile = java.io.File(java.io.File(context.filesDir, "attachments"), filename)
+                              if (cleanFile.exists()) {
+                                  bytes = java.io.FileInputStream(cleanFile).use { it.readBytes() }
+                              }
+                         } catch (e: Exception) { Log.w("BackupRepo", "PP-Strategy 1 failed: ${e.message}") }
+                     }
+
+                     // Strategy 2: Direct File Read
+                     if (bytes == null && att.uri.startsWith("/") && java.io.File(att.uri).exists()) {
+                         try {
+                              bytes = java.io.FileInputStream(java.io.File(att.uri)).use { it.readBytes() }
+                         } catch (e: Exception) { Log.w("BackupRepo", "PP-Strategy 2 failed: ${e.message}") }
+                     }
+
+                     // Strategy 3: Parsing as URI
+                     if (bytes == null) {
+                         try {
+                              bytes = context.contentResolver.openInputStream(Uri.parse(att.uri))?.use { it.readBytes() }
+                         } catch (e: Exception) { Log.w("BackupRepo", "PP-Strategy 3 failed: ${e.message}") }
+                     }
+
+                     if (bytes != null && bytes.isNotEmpty()) {
+                         Base64.encodeToString(bytes, Base64.DEFAULT)
+                     } else {
+                         Log.e("BackupRepo", "PP-ALL STRATEGIES FAILED for ${att.uri}")
+                         null
+                     }
                  } catch (e: Exception) {
-                     Log.w("BackupRepository", "Failed to read attachment ${att.uri}: ${e.message}")
+                     Log.e("BackupRepo", "PP-Fatal error reading attachment ${att.uri}", e)
                      null
                  }
                  AttachmentExport(att.uri, att.displayName, att.mimeType, base64)

@@ -58,16 +58,23 @@ private suspend fun getFormattedLatestBackupTime(backupRepository: BackupReposit
 }
 
 private fun restoreAttachments(context: android.content.Context, exports: List<AttachmentExport>): List<Note.Attachment> {
+    val attachmentsDir = java.io.File(context.filesDir, "attachments").apply { if (!exists()) mkdirs() }
+    
+    // Log what we are trying to restore
+    val survey = exports.map { "uri=${it.uri} hasBase64=${it.base64Content != null} len=${it.base64Content?.length ?: 0}" }
+    android.util.Log.d("BackupScreen", "Restoring attachments: $survey")
+
     return exports.map { export ->
         val uri = if (export.base64Content != null) {
             try {
                 val bytes = Base64.decode(export.base64Content, Base64.DEFAULT)
                 val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(export.mimeType) ?: "bin"
                 val filename = "restored_${System.currentTimeMillis()}_${UUID.randomUUID()}.$ext"
-                val file = File(context.filesDir, filename)
+                val file = java.io.File(attachmentsDir, filename)
                 FileOutputStream(file).use { it.write(bytes) }
-                Uri.fromFile(file).toString()
+                file.absolutePath
             } catch (e: Exception) {
+                android.util.Log.e("BackupScreen", "Failed to restore attachment", e)
                 export.uri
             }
         } else {

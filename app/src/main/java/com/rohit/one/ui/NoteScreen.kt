@@ -255,7 +255,7 @@ fun NoteScreen(
     fun deleteInternalAttachment(att: Note.Attachment) {
         try {
             val f = java.io.File(att.uri)
-            if (f.exists() && f.absolutePath.startsWith(attachmentsDir.absolutePath)) {
+            if (f.exists() && f.canonicalFile.absolutePath.startsWith(attachmentsDir.canonicalFile.absolutePath)) {
                 val ok = f.delete()
                 Log.d("NoteScreen", "Deleted attachment file ${f.absolutePath}: $ok")
             } else {
@@ -1819,16 +1819,29 @@ private fun AttachmentList(
                     onClick = {
                         // Open the attachment when tapped
                         try {
+                            Log.d("NoteScreen", "Opening attachment: ${att.uri} mime=${att.mimeType}")
                             val intent = Intent(Intent.ACTION_VIEW)
                             val attFile = java.io.File(att.uri)
-                            val isInternal = attFile.exists() && attFile.absolutePath.startsWith(attachmentsDir.absolutePath)
+                            val canonicalFile = attFile.canonicalFile
+                            val canonicalDir = attachmentsDir.canonicalFile
+                            val isInternal = attFile.exists() && canonicalFile.absolutePath.startsWith(canonicalDir.absolutePath)
+                            
+                            Log.d("NoteScreen", "File info: exists=${attFile.exists()} isInternal=$isInternal")
+                            Log.d("NoteScreen", "Path: ${attFile.absolutePath}")
+                            Log.d("NoteScreen", "Canonical Path: ${canonicalFile.absolutePath}")
+                            Log.d("NoteScreen", "Attachments Dir: ${attachmentsDir.absolutePath}")
+                            Log.d("NoteScreen", "Canonical Dir: ${canonicalDir.absolutePath}")
+                            Log.d("NoteScreen", "File Size: ${attFile.length()} bytes")
+
                             if (isInternal) {
                                 val contentUri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", attFile)
+                                Log.d("NoteScreen", "Generated content URI: $contentUri")
                                 intent.setDataAndType(contentUri, att.mimeType ?: "*/*")
                                 intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             } else {
                                 // Try parsing as URI (content:// or http). If parsing fails, fall back to file path.
                                 val maybeUri = try { att.uri.toUri() } catch (_: Exception) { null }
+                                Log.d("NoteScreen", "Parsed external URI: $maybeUri")
                                 if (maybeUri != null) {
                                     intent.setDataAndType(maybeUri, att.mimeType ?: ctx.contentResolver.getType(maybeUri) ?: "*/*")
                                     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -1842,7 +1855,7 @@ private fun AttachmentList(
                             if (ctx !is android.app.Activity) chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             ctx.startActivity(chooser)
                         } catch (e: Exception) {
-                            Log.w("NoteScreen", "Failed to open attachment ${att.uri}: ${e.message}")
+                            Log.e("NoteScreen", "Failed to open attachment", e)
                             Toast.makeText(ctx, "Cannot open file", Toast.LENGTH_SHORT).show()
                         }
                     },
