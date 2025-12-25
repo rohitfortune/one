@@ -18,10 +18,19 @@ data class CardExport(
 )
 
 @JsonClass(generateAdapter = true)
+data class AttachmentExport(
+    val uri: String,
+    val displayName: String? = null,
+    val mimeType: String? = null,
+    val base64Content: String? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class NoteExport(
     val title: String,
     val content: String,
-    val attachments: List<Note.Attachment> = emptyList()
+    val attachments: List<AttachmentExport> = emptyList(),
+    val paths: List<Note.Path> = emptyList()
 )
 
 @JsonClass(generateAdapter = true)

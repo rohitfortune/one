@@ -14,6 +14,8 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import android.net.Uri
+import android.util.Base64
 
 class BackupRepository(@Suppress("unused") private val context: Context) {
 
@@ -206,7 +208,21 @@ class BackupRepository(@Suppress("unused") private val context: Context) {
              val full = fetchFullCardNumber(c.uuid)
              CardExport(c.uuid, c.cardholderName, c.last4, full, c.brand, c.expiry, c.securityCode, c.createdAt)
          }
-         val noteExports = notes.map { n -> NoteExport(n.title, n.content, n.attachments) }
+         val noteExports = notes.map { n ->
+             val attachmentExports = n.attachments.map { att ->
+                 val base64 = try {
+                     val inputStream = context.contentResolver.openInputStream(Uri.parse(att.uri))
+                     val bytes = inputStream?.readBytes()
+                     inputStream?.close()
+                     if (bytes != null) Base64.encodeToString(bytes, Base64.DEFAULT) else null
+                 } catch (e: Exception) {
+                     Log.w("BackupRepository", "Failed to read attachment ${att.uri}: ${e.message}")
+                     null
+                 }
+                 AttachmentExport(att.uri, att.displayName, att.mimeType, base64)
+             }
+             NoteExport(n.title, n.content, attachmentExports, n.paths)
+         }
          val payload = BackupPayload(noteExports, pwExports, cardExports)
          val json = moshi.adapter(BackupPayload::class.java).toJson(payload)
          val enc = CryptoUtil.encrypt(json)
@@ -267,7 +283,21 @@ class BackupRepository(@Suppress("unused") private val context: Context) {
              val full = fetchFullCardNumber(c.uuid)
              CardExport(c.uuid, c.cardholderName, c.last4, full, c.brand, c.expiry, c.securityCode, c.createdAt)
          }
-         val noteExports = notes.map { n -> NoteExport(n.title, n.content, n.attachments) }
+         val noteExports = notes.map { n ->
+             val attachmentExports = n.attachments.map { att ->
+                 val base64 = try {
+                     val inputStream = context.contentResolver.openInputStream(Uri.parse(att.uri))
+                     val bytes = inputStream?.readBytes()
+                     inputStream?.close()
+                     if (bytes != null) Base64.encodeToString(bytes, Base64.DEFAULT) else null
+                 } catch (e: Exception) {
+                     Log.w("BackupRepository", "Failed to read attachment ${att.uri}: ${e.message}")
+                     null
+                 }
+                 AttachmentExport(att.uri, att.displayName, att.mimeType, base64)
+             }
+             NoteExport(n.title, n.content, attachmentExports, n.paths)
+         }
          val payload = BackupPayload(noteExports, pwExports, cardExports)
          val json = moshi.adapter(BackupPayload::class.java).toJson(payload)
          val enc = BackupCrypto.encryptWithPassphrase(json, passphrase)

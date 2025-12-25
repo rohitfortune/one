@@ -22,8 +22,8 @@ class NotesViewModel(private val noteRepository: NoteRepository) : ViewModel() {
 
     fun deleteNote(note: Note) { viewModelScope.launch { noteRepository.deleteNote(note) } }
 
-    fun restoreNoteFromBackup(title: String, content: String, attachments: List<Note.Attachment> = emptyList()) {
-        viewModelScope.launch { noteRepository.upsertNoteFromBackup(title, content, attachments) }
+    fun restoreNoteFromBackup(title: String, content: String, attachments: List<Note.Attachment> = emptyList(), paths: List<Note.Path> = emptyList()) {
+        viewModelScope.launch { noteRepository.upsertNoteFromBackup(title, content, attachments, paths) }
     }
 
     suspend fun findByTitleAndContent(title: String, content: String): Note? = noteRepository.findByTitleAndContent(title, content)

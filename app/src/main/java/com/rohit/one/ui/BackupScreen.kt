@@ -32,6 +32,14 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import android.util.Base64
+import android.webkit.MimeTypeMap
+import java.io.File
+import java.io.FileOutputStream
+import android.net.Uri
+import java.util.UUID
+import com.rohit.one.data.Note
+import com.rohit.one.data.AttachmentExport
 
 private enum class PassphraseAction { NONE, BACKUP, RESTORE }
 private enum class OperationType { NONE, BACKUP, RESTORE }
@@ -46,6 +54,26 @@ private suspend fun getFormattedLatestBackupTime(backupRepository: BackupReposit
         fmt.format(inst)
     } catch (_: Exception) {
         iso
+    }
+}
+
+private fun restoreAttachments(context: android.content.Context, exports: List<AttachmentExport>): List<Note.Attachment> {
+    return exports.map { export ->
+        val uri = if (export.base64Content != null) {
+            try {
+                val bytes = Base64.decode(export.base64Content, Base64.DEFAULT)
+                val ext = MimeTypeMap.getSingleton().getExtensionFromMimeType(export.mimeType) ?: "bin"
+                val filename = "restored_${System.currentTimeMillis()}_${UUID.randomUUID()}.$ext"
+                val file = File(context.filesDir, filename)
+                FileOutputStream(file).use { it.write(bytes) }
+                Uri.fromFile(file).toString()
+            } catch (e: Exception) {
+                export.uri
+            }
+        } else {
+            export.uri
+        }
+        Note.Attachment(uri, export.displayName, export.mimeType)
     }
 }
 
@@ -307,9 +335,10 @@ fun BackupScreen(
                                     return@launch
                                 }
 
-                                // restore notes including inline attachments
+                                // restore notes including inline attachments and paths
                                 parsed.notes.forEach { n ->
-                                    notesViewModel.restoreNoteFromBackup(n.title, n.content, n.attachments)
+                                    val restoredAttachments = restoreAttachments(context, n.attachments)
+                                    notesViewModel.restoreNoteFromBackup(n.title, n.content, restoredAttachments, n.paths)
                                 }
                                 parsed.passwords.forEach { p ->
                                     vaultsViewModel.restorePasswordFromBackup(
@@ -466,7 +495,8 @@ fun BackupScreen(
                                             }
                                             uiScope.launch {
                                                 parsed.notes.forEach { n ->
-                                                    notesViewModel.restoreNoteFromBackup(n.title, n.content, n.attachments)
+                                                    val restoredAttachments = restoreAttachments(context, n.attachments)
+                                                    notesViewModel.restoreNoteFromBackup(n.title, n.content, restoredAttachments, n.paths)
                                                 }
                                                 parsed.passwords.forEach { p ->
                                                     vaultsViewModel.restorePasswordFromBackup(
