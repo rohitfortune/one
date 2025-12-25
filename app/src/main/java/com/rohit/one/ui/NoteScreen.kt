@@ -336,7 +336,7 @@ fun NoteScreen(
         while (true) {
             try {
                 val visible = listState.layoutInfo.visibleItemsInfo
-                Log.d("NoteScreen", "visibleItems: count=${visible.size} firstIndex=${visible.firstOrNull()?.index}")
+
                 val visibleMap = mutableMapOf<Int, Pair<Float, Float>>()
                 val blockStartIndex = if (attachments.isNotEmpty()) 1 else 0
                 val totalBlocks = editorState.blocks.size
@@ -354,7 +354,7 @@ fun NoteScreen(
                     blockHeights[blockIdx] = sizePx
                     // Write immediate top in local (container) coordinates so drawing uses same space.
                     smoothedBlockTops[blockIdx] = targetOffset
-                    Log.d("NoteScreen", "smoothed top updated: idx=$blockIdx top=$targetOffset")
+
                 }
              }
              catch (_: Exception) {
@@ -1032,7 +1032,8 @@ private fun toggleStyleSpan(
     style: InlineStyle
 ): List<StyleSpan> {
     if (selection.collapsed) return spans
-    val (start, end) = selection.start to selection.end
+    val start = selection.min
+    val end = selection.max
     val newSpans = spans.toMutableList()
     // Remove any existing span of this style in the selection
     val overlapping = newSpans.filter { it.style == style && it.start < end && it.end > start }
@@ -1091,6 +1092,8 @@ private fun ParagraphBlock(
 ) {
     var value by remember(text, spans, selection) { mutableStateOf(TextFieldValue(text, selection)) }
 
+    val focusRequester = remember { FocusRequester() }
+
     BasicTextField(
         value = value,
         onValueChange = { newValue ->
@@ -1121,6 +1124,7 @@ private fun ParagraphBlock(
         },
         modifier = Modifier
             .fillMaxWidth()
+            .focusRequester(focusRequester)
             .onFocusChanged { if (it.isFocused) onFocused() },
         textStyle = TextStyle(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface),
         keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Default),
