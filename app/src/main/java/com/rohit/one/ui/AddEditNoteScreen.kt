@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -37,10 +38,10 @@ fun AddEditNoteScreen(
     onNavigateUp: () -> Unit
 ) {
     val context = LocalContext.current
-    var title by remember { mutableStateOf(note?.title ?: "") }
-    var content by remember { mutableStateOf(note?.content ?: "") }
+    var title by rememberSaveable { mutableStateOf(note?.title ?: "") }
+    var content by rememberSaveable { mutableStateOf(note?.content ?: "") }
     // Inline attachments list managed in screen state; persisted on save/update
-    var attachments by remember { mutableStateOf(note?.attachments ?: emptyList()) }
+    var attachments by rememberSaveable { mutableStateOf(note?.attachments ?: emptyList()) }
 
     // File picker launcher: ACTION_OPEN_DOCUMENT
     val pickDocumentLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->

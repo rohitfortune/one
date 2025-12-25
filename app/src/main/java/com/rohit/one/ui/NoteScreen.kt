@@ -119,26 +119,35 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.SolidColor
 
+import android.os.Parcelable
+import kotlinx.parcelize.Parcelize
+
 private enum class InlineStyle { Bold, Italic, Underline }
 
 // Represents a formatting span
-private data class StyleSpan(val start: Int, val end: Int, val style: InlineStyle)
+@Parcelize
+private data class StyleSpan(val start: Int, val end: Int, val style: InlineStyle) : Parcelable
 
-private sealed class NoteBlock {
+private sealed class NoteBlock : Parcelable {
+    @Parcelize
     data class Paragraph(
         var text: String,
         val spans: List<StyleSpan> = emptyList()
     ) : NoteBlock()
+    @Parcelize
     data class ChecklistItem(var text: String, var checked: Boolean) : NoteBlock()
+    @Parcelize
     data class BulletItem(var text: String) : NoteBlock()
+    @Parcelize
     data class NumberedItem(var index: Int, var text: String) : NoteBlock()
 }
 
+@Parcelize
 private data class NoteEditorState(
     val title: String,
     val blocks: List<NoteBlock>,
     val strokes: List<Note.Path> = emptyList() // Add strokes to track drawing
-)
+) : Parcelable
 
 // Very small history stack for undo/redo on the new model
 private class BlockHistory(private val limit: Int = 20) {
@@ -213,11 +222,12 @@ private enum class EditMode {
 }
 
 // Simple drawing state for freehand overlay
+@Parcelize
 private data class DrawingState(
     val isDrawing: Boolean = false,
     val strokes: List<Note.Path> = emptyList(),
     val currentStroke: Note.Path? = null
-)
+) : Parcelable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -238,7 +248,12 @@ fun NoteScreen(
     val initialText = note?.content ?: ""
     val initialBlocks = remember(initialText) { parseMarkdownToBlocks(initialText) }
 
-    var editorState by remember {
+    val editorStateSaver = androidx.compose.runtime.saveable.Saver<NoteEditorState, NoteEditorState>(
+        save = { it },
+        restore = { it }
+    )
+
+    var editorState by androidx.compose.runtime.saveable.rememberSaveable(stateSaver = editorStateSaver) {
         mutableStateOf(
             NoteEditorState(
                 title = note?.title ?: "",
@@ -249,7 +264,7 @@ fun NoteScreen(
     }
 
     // Attachments state (new) - keep track of attachments in the editor
-    var attachments by remember { mutableStateOf(note?.attachments ?: emptyList()) }
+    var attachments by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(note?.attachments ?: emptyList()) }
 
     // Directory for attachments in internal storage
     val attachmentsDir = java.io.File(context.filesDir, "attachments").apply { if (!exists()) mkdirs() }
@@ -367,9 +382,15 @@ fun NoteScreen(
          }
      }
 
+    // We don't save history, it's transient.
     val history = remember { BlockHistory().apply { push(editorState) } }
 
-    var drawingState by remember(note?.paths) {
+    val drawingStateSaver = androidx.compose.runtime.saveable.Saver<DrawingState, DrawingState>(
+        save = { it },
+        restore = { it }
+    )
+
+    var drawingState by androidx.compose.runtime.saveable.rememberSaveable(note?.paths, stateSaver = drawingStateSaver) {
         mutableStateOf(
             DrawingState(
                 isDrawing = false,

@@ -89,6 +89,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.background
 import com.rohit.one.data.NoteDatabase
 
 @Suppress("DEPRECATION")
@@ -348,15 +350,25 @@ class MainActivity : FragmentActivity() {
         setContent {
             val locked by remember { isAppLocked }
             OneTheme {
-                if (locked) {
-                    LockScreen { authenticateUser() }
-                } else {
+                androidx.compose.foundation.layout.Box(modifier = Modifier.fillMaxSize()) {
+                    // Always compose the app so its state (NavHost) is preserved
                     OneApp(
                         notesViewModel = notesViewModel,
                         vaultsViewModel = vaultsViewModel,
                         onSignIn = { startSignIn() },
                         signedInAccountState = signedInAccountState
                     )
+                    
+                    // Overlay the lock screen if locked
+                    if (locked) {
+                        LockScreen(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(1f) // Ensure it sits on top
+                                .background(MaterialTheme.colorScheme.background), // Opaque background
+                            onUnlock = { authenticateUser() }
+                        )
+                    }
                 }
             }
         }
@@ -1014,8 +1026,11 @@ fun NoteItem(note: Note, onClick: () -> Unit) {
 }
 
 @Composable
-fun LockScreen(onUnlock: () -> Unit) {
-    Scaffold { padding ->
+fun LockScreen(
+    modifier: Modifier = Modifier,
+    onUnlock: () -> Unit
+) {
+    Scaffold(modifier = modifier) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
