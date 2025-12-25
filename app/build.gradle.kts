@@ -102,6 +102,9 @@ dependencies {
     // Google Sign-In (used to obtain OAuth tokens to talk to Drive appData)
     implementation(libs.play.services.auth)
 
+    // Microsoft Authentication Library (MSAL) for OneDrive
+    implementation("com.microsoft.identity.client:msal:5.1.0")
+
     // AndroidX Credential Manager (v1.5.0) via version catalog alias
     implementation(libs.androidxCredentialsV150)
 
