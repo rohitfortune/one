@@ -381,6 +381,7 @@ class MainActivity : FragmentActivity() {
                     val addScopeMethod = authReqBuilder.javaClass.methods.firstOrNull { it.name == "addScope" && it.parameterTypes.size == 1 }
                     addScopeMethod?.invoke(authReqBuilder, scope)
                     addScopeMethod?.invoke(authReqBuilder, scopeFull)
+                    addScopeMethod?.invoke(authReqBuilder, com.google.android.gms.common.api.Scope("email"))
                 } catch (_: Throwable) {
                     // If addScope not available or reflection fails, ignore — some older versions may require different API
                 }
@@ -441,11 +442,37 @@ class MainActivity : FragmentActivity() {
                                 }
 
                                 if (!accessToken.isNullOrBlank()) {
+                                    // Fetch user info to get the email (needed for persistence and refresh)
+                                    val token = accessToken
                                     mainScope.launch {
-                                        val saved = CredentialAuthStore.saveTokens(applicationContext, accessToken, null, System.currentTimeMillis() + 3600_000)
-                                        Log.i("OneApp", "Saved access token from AuthorizationClient: $saved")
+                                        val email = withContext(Dispatchers.IO) {
+                                            try {
+                                                val url = java.net.URL("https://www.googleapis.com/oauth2/v3/userinfo")
+                                                val conn = url.openConnection() as java.net.HttpURLConnection
+                                                conn.requestMethod = "GET"
+                                                conn.setRequestProperty("Authorization", "Bearer $token")
+                                                conn.connectTimeout = 10000
+                                                conn.readTimeout = 10000
+                                                if (conn.responseCode == 200) {
+                                                    val json = conn.inputStream.bufferedReader().use { it.readText() }
+                                                    val obj = org.json.JSONObject(json)
+                                                    if (obj.has("email")) obj.getString("email") else null
+                                                } else {
+                                                    Log.w("OneApp", "UserInfo fetch failed: ${conn.responseCode} ${conn.responseMessage}")
+                                                    null
+                                                }
+                                            } catch (e: Exception) {
+                                                Log.w("OneApp", "UserInfo fetch error: ${e.message}")
+                                                null
+                                            }
+                                        }
+
+                                        val userId = email ?: "GoogleUser" // Fallback if fetch fails, though email is critical for refresh
+                                        val saved = CredentialAuthStore.saveTokens(applicationContext, token, null, System.currentTimeMillis() + 3600_000, userId)
+                                        Log.i("OneApp", "Saved access token from AuthorizationClient: $saved (user=$userId)")
+                                        
                                         // Update hoisted Compose state directly
-                                        signedInAccountState.value = "GoogleUser"
+                                        signedInAccountState.value = userId
                                     }
                                 } else {
                                     Log.i("OneApp", "Authorization succeeded but no access token present; result=$result")
