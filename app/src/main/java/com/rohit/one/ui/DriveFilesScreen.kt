@@ -149,9 +149,11 @@ fun DriveFilesScreen(
     // State for Upload Menu
     var showUploadMenu by remember { mutableStateOf(false) }
     var tempCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var isUploading by remember { mutableStateOf(false) }
 
     // Helper to upload a uri
     fun uploadUri(uri: android.net.Uri) {
+         isUploading = true
          val contentResolver = context.contentResolver
          val type = contentResolver.getType(uri) ?: "application/octet-stream"
          val name = androidx.documentfile.provider.DocumentFile.fromSingleUri(context, uri)?.name ?: "upload_${System.currentTimeMillis()}"
@@ -174,6 +176,8 @@ fun DriveFilesScreen(
                  withContext(Dispatchers.Main) {
                      Toast.makeText(context, "Upload failed: ${e.message}", Toast.LENGTH_SHORT).show()
                  }
+             } finally {
+                 isUploading = false
              }
          }
     }
@@ -327,6 +331,10 @@ fun DriveFilesScreen(
                 }
             }
             
+            if (isUploading) {
+                androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            
             if (isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
@@ -356,7 +364,20 @@ fun DriveFilesScreen(
                                 }
                             },
                             onDownload = { downloadDriveFile(context, accessToken!!, file) },
-                            onShare = { shareDriveFile(context, accessToken!!, file) }
+                            onShare = { shareDriveFile(context, accessToken!!, file) },
+                            onDelete = {
+                                kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+                                    try {
+                                        deleteDriveFile(accessToken!!, file.id)
+                                        withContext(Dispatchers.Main) { 
+                                            Toast.makeText(context, "File deleted", Toast.LENGTH_SHORT).show()
+                                            refreshTrigger++ 
+                                        }
+                                    } catch (e: Exception) {
+                                         withContext(Dispatchers.Main) { Toast.makeText(context, "Delete failed: ${e.message}", Toast.LENGTH_SHORT).show() }
+                                    }
+                                }
+                            }
                         )
                      }
                  }
@@ -373,7 +394,8 @@ private fun DriveFileItem(
     accessToken: String?,
     onClick: () -> Unit,
     onDownload: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onDelete: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
     val formattedDate = remember(file.modifiedTime) {
@@ -417,6 +439,11 @@ private fun DriveFileItem(
                                 leadingIcon = { Icon(Icons.Rounded.Share, null) },
                                 onClick = { showMenu = false; onShare() }
                             )
+                             DropdownMenuItem(
+                                text = { Text("Delete") },
+                                leadingIcon = { Icon(Icons.Rounded.Delete, null) },
+                                onClick = { showMenu = false; onDelete() }
+                            )
                         }
                     }
                 }
@@ -451,6 +478,11 @@ private fun DriveFileItem(
                                 text = { Text("Share") },
                                 leadingIcon = { Icon(Icons.Rounded.Share, null) },
                                 onClick = { showMenu = false; onShare() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete") },
+                                leadingIcon = { Icon(Icons.Rounded.Delete, null) },
+                                onClick = { showMenu = false; onDelete() }
                             )
                         }
                     }
@@ -681,4 +713,20 @@ private suspend fun uploadFileToDrive(accessToken: String, folderId: String, fil
         
     val response = client.newCall(request).execute()
     if (!response.isSuccessful) throw Exception("Upload failed: ${response.code}")
+}
+
+private suspend fun deleteDriveFile(accessToken: String, fileId: String) = withContext(Dispatchers.IO) {
+    val client = OkHttpClient()
+    // Using PATCH to trash instead of DELETE (permanent) for safety
+    val metadataJson = """{"trashed": true}"""
+    val requestBody = RequestBody.create("application/json; charset=UTF-8".toMediaTypeOrNull(), metadataJson)
+    
+    val request = Request.Builder()
+        .url("https://www.googleapis.com/drive/v3/files/$fileId")
+        .addHeader("Authorization", "Bearer $accessToken")
+        .patch(requestBody)
+        .build()
+        
+    val response = client.newCall(request).execute()
+    if (!response.isSuccessful) throw Exception("Delete failed: ${response.code}")
 }

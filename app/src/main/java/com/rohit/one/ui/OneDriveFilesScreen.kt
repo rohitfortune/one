@@ -128,9 +128,11 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
     // State for Upload Menu
     var showUploadMenu by remember { mutableStateOf(false) }
     var tempCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var isUploading by remember { mutableStateOf(false) }
 
     // Helper to upload a uri
     fun uploadUri(uri: android.net.Uri) {
+         isUploading = true
          val contentResolver = context.contentResolver
          val type = contentResolver.getType(uri) ?: "application/octet-stream"
          val name = androidx.documentfile.provider.DocumentFile.fromSingleUri(context, uri)?.name ?: "upload_${System.currentTimeMillis()}"
@@ -153,6 +155,8 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
                  withContext(Dispatchers.Main) {
                      Toast.makeText(context, "Upload failed: ${e.message}", Toast.LENGTH_SHORT).show()
                  }
+             } finally {
+                 isUploading = false
              }
          }
     }
@@ -185,7 +189,8 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
             }
             authInitialized = true
         } else {
-            error = "Failed to initialize MSAL"
+            error = "Failed to initialize MSAL: Check auth_config.json"
+            Toast.makeText(context, error, Toast.LENGTH_LONG).show() // Popup
             authInitialized = true
         }
     }
@@ -222,6 +227,18 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
             Text("Microsoft OneDrive", style = MaterialTheme.typography.headlineMedium)
             Spacer(modifier = Modifier.height(16.dp))
             Text("Sign in to access your files", style = MaterialTheme.typography.bodyLarge)
+            
+            if (error != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = error!!,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 32.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+            
             Spacer(modifier = Modifier.height(24.dp))
             
             Button(onClick = {
@@ -371,6 +388,10 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
                 }
             }
             
+            if (isUploading) {
+                androidx.compose.material3.LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            
             if (isLoading) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
@@ -400,7 +421,20 @@ fun OneDriveFilesScreen(onBack: () -> Unit) {
                                 }
                             },
                              onDownload = { downloadOneDriveFile(context, accessToken!!, file) },
-                             onShare = { shareOneDriveFile(context, accessToken!!, file) }
+                             onShare = { shareOneDriveFile(context, accessToken!!, file) },
+                             onDelete = {
+                                 kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+                                     try {
+                                         deleteOneDriveFile(accessToken!!, file.id)
+                                         withContext(Dispatchers.Main) {
+                                             Toast.makeText(context, "File deleted", Toast.LENGTH_SHORT).show()
+                                             refreshTrigger++
+                                         }
+                                     } catch (e: Exception) {
+                                         withContext(Dispatchers.Main) { Toast.makeText(context, "Delete failed: ${e.message}", Toast.LENGTH_SHORT).show() }
+                                     }
+                                 }
+                             }
                         )
                      }
                  }
@@ -417,7 +451,8 @@ private fun OneDriveFileItem(
     accessToken: String?,
     onClick: () -> Unit,
     onDownload: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onDelete: () -> Unit
 ) {
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
@@ -462,6 +497,11 @@ private fun OneDriveFileItem(
                                 leadingIcon = { Icon(Icons.Rounded.Share, null) },
                                 onClick = { showMenu = false; onShare() }
                             )
+                             DropdownMenuItem(
+                                text = { Text("Delete") },
+                                leadingIcon = { Icon(Icons.Rounded.Delete, null) },
+                                onClick = { showMenu = false; onDelete() }
+                            )
                         }
                     }
                 }
@@ -496,6 +536,11 @@ private fun OneDriveFileItem(
                                 text = { Text("Share") },
                                 leadingIcon = { Icon(Icons.Rounded.Share, null) },
                                 onClick = { showMenu = false; onShare() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete") },
+                                leadingIcon = { Icon(Icons.Rounded.Delete, null) },
+                                onClick = { showMenu = false; onDelete() }
                             )
                         }
                     }
@@ -740,5 +785,20 @@ private suspend fun uploadFileToOneDrive(accessToken: String, folderId: String, 
     if (!response.isSuccessful) {
         val body = response.body?.string()
         throw Exception("Upload failed: ${response.code} $body")
+    }
+}
+
+private suspend fun deleteOneDriveFile(accessToken: String, fileId: String) = withContext(Dispatchers.IO) {
+    val client = OkHttpClient()
+    val request = Request.Builder()
+        .url("https://graph.microsoft.com/v1.0/me/drive/items/$fileId")
+        .addHeader("Authorization", "Bearer $accessToken")
+        .delete()
+        .build()
+        
+    val response = client.newCall(request).execute()
+    if (!response.isSuccessful && response.code != 204) { // 204 No Content is success for delete
+         val body = response.body?.string()
+         throw Exception("Delete failed: ${response.code} $body")
     }
 }

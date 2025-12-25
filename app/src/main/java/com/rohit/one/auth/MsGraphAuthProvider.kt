@@ -26,22 +26,48 @@ object MsGraphAuthProvider {
             return@suspendCancellableCoroutine
         }
 
-        PublicClientApplication.createSingleAccountPublicClientApplication(
-            context.applicationContext,
-            R.raw.auth_config_single_account,
-            object : IPublicClientApplication.ISingleAccountApplicationCreatedListener {
-                override fun onCreated(application: ISingleAccountPublicClientApplication) {
-                    mSingleAccountApp = application
-                    Log.d(TAG, "MSAL initialized successfully")
-                    cont.resume(true)
-                }
-
-                override fun onError(exception: MsalException) {
-                    Log.e(TAG, "MSAL initialization failed: ${exception.message}")
-                    cont.resume(false)
-                }
+        // PRE-CHECK: Manually validate the config file to prevent MSAL background thread crashes
+        try {
+            val resources = context.resources
+            val inputStream = resources.openRawResource(R.raw.auth_config_single_account)
+            val jsonString = inputStream.bufferedReader().use { it.readText() }
+            
+            if (jsonString.contains(": \"onedrive client id\"") || jsonString.contains(": \"redirect_uri\"")) {
+                 Log.e(TAG, "Invalid placeholders detected in auth_config. Aborting MSAL init to prevent crash.")
+                 cont.resume(false)
+                 return@suspendCancellableCoroutine
             }
-        )
+             if (jsonString.contains("\"client_id\"") && jsonString.contains(": \"\"")) {
+                 Log.e(TAG, "Empty client_id detected. Aborting.")
+                 cont.resume(false)
+                 return@suspendCancellableCoroutine
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to read auth config: ${e.message}")
+            // Continue and let MSAL try (or fail), but at least we tried to protect
+        }
+
+        try {
+            PublicClientApplication.createSingleAccountPublicClientApplication(
+                context.applicationContext,
+                R.raw.auth_config_single_account,
+                object : IPublicClientApplication.ISingleAccountApplicationCreatedListener {
+                    override fun onCreated(application: ISingleAccountPublicClientApplication) {
+                        mSingleAccountApp = application
+                        Log.d(TAG, "MSAL initialized successfully")
+                        cont.resume(true)
+                    }
+
+                    override fun onError(exception: MsalException) {
+                        Log.e(TAG, "MSAL initialization failed: ${exception.message}")
+                        cont.resume(false)
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "MSAL initialization threw exception: ${e.message}")
+            cont.resume(false)
+        }
     }
 
     suspend fun signIn(activity: Activity): IAuthenticationResult? = suspendCancellableCoroutine { cont ->
